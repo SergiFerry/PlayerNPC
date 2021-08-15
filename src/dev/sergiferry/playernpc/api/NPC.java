@@ -317,7 +317,6 @@ public class NPC {
      * @throws IllegalArgumentException if {@code slot} equals {@code null}
      *
      * @see NPC#update()
-     * @see NPC#updateEquipment()
      */
     public NPC setItem(@Nonnull NPCSlot slot, @Nullable ItemStack itemStack){
         Validate.notNull(slot, "Failed to set item, NPCSlot cannot be null");
@@ -448,11 +447,31 @@ public class NPC {
         return this;
     }
 
+    /**
+     * Sets the direction that the {@link NPC} will look to the location of the {@link Entity}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
+     *
+     * @param entity The entity that will look at.
+     * @return The {@link NPC} instance.
+     * @throws IllegalArgumentException if {@code entity} equals {@code null}
+     *
+     * @see NPC#update()
+     */
     public NPC lookAt(@Nonnull Entity entity){
-        Validate.notNull(entity, "Failed to set look direction. The entity cannot be null.");
+        Validate.notNull(entity, "Failed to set look direction. The entity cannot be null");
         return lookAt(entity.getLocation());
     }
 
+    /**
+     * Sets the direction that the {@link NPC} will look to the {@link Location}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
+     *
+     * @param location The location that will look at.
+     * @return The {@link NPC} instance.
+     * @throws IllegalArgumentException if {@code entity} equals {@code null}
+     *
+     * @see NPC#update()
+     */
     public NPC lookAt(@Nonnull Location location){
         Validate.notNull(location, "Failed to set look direction. The location cannot be null.");
         Validate.notNull(entityPlayer, "Failed to set look direction. The NPC has not been created yet.");
@@ -467,6 +486,12 @@ public class NPC {
         return this;
     }
 
+    /**
+     * Hides or shows the text above the {@link NPC}, but without losing the text information.
+     *
+     * @param b boolean if the text will be hidden or not
+     * @return The {@link NPC} instance.
+     */
     public NPC setHideText(boolean b){
         boolean a = hiddenText;
         this.hiddenText = b;
@@ -477,23 +502,57 @@ public class NPC {
         return this;
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets whether the {@link NPC} is collidable or not.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     */
     public NPC setCollidable(boolean collidable) {
         this.collidable = collidable;
         return this;
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets the {@link NPCSkin} of the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @param texture Texture of the skin
+     * @param signature Signature of the skin
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     */
     public NPC setSkin(@Nonnull String texture, @Nonnull String signature){
         return setSkin(new NPCSkin(texture, signature));
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets the {@link NPCSkin} of the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @param texture Texture of the skin
+     * @param signature Signature of the skin
+     * @param playerName Name of the skin owner, this is not necessary, but it will store it on the {@link NPCSkin} instance.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     */
     public NPC setSkin(@Nonnull String texture, @Nonnull String signature, @Nullable String playerName){
         return setSkin(new NPCSkin(texture, signature, playerName));
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets the {@link NPCSkin} of the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @param playerName Name of the skin owner. It will fetch skin even if the player is not online.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     */
     public NPC setSkin(@Nullable String playerName){
         if(playerName == null) return setSkin(NPCSkin.DEFAULT);
         String[] skin = SkinFetcher.getSkin(playerName);
@@ -501,28 +560,71 @@ public class NPC {
         return setSkin(skin[0], skin[1], playerName);
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets the {@link NPCSkin} of the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @param playerSkin Player that is online, that will fetch skin.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     */
     public NPC setSkin(@Nullable Player playerSkin){
         if(playerSkin == null) return setSkin(NPCSkin.DEFAULT);
         Validate.isTrue(playerSkin.isOnline(), "Failed to set NPC skin. Player must be online.");
         return setSkin(playerSkin.getName());
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets the {@link NPCSkin} of the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @param npcSkin NPCSkin with the texture and signature.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     */
     public NPC setSkin(@Nullable NPCSkin npcSkin){
         if(npcSkin == null) npcSkin = NPCSkin.DEFAULT;
         this.skin = npcSkin;
         return this;
     }
 
+    /**
+     * Sets the {@link NPCSkin} of the {@link NPC} as the Default minecraft skin.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     */
     public NPC clearSkin(){
         return setSkin((NPCSkin) null);
     }
 
+    /**
+     * Clears the text above the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
+     *
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdateText()
+     */
     public NPC clearText(){
         return setText(new ArrayList<>());
     }
 
+    /**
+     * Sets the text above the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#updateText()} if there are the same amount of lines or
+     * {@link NPC#forceUpdateText()} if there are different amount of lines, to show it to the {@link Player}
+     *
+     * @param text The text above the NPC, each {@link String} will be one line.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#updateText()
+     * @see NPC#forceUpdateText()
+     */
     public NPC setText(@Nonnull List<String> text){
         if(npcHologram == null) npcHologram = new NPCHologram(this, text);
         this.text = text;
@@ -535,65 +637,163 @@ public class NPC {
         return this;
     }
 
+    /**
+     * Sets the text above the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#updateText()} if there are the same amount of lines or
+     * {@link NPC#forceUpdateText()} if there are different amount of lines, to show it to the {@link Player}
+     *
+     * @param text The text above the NPC, each {@link String} will be one line.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#updateText()
+     * @see NPC#forceUpdateText()
+     */
     public NPC setText(@Nonnull String... text){
         return setText(Arrays.asList(text));
     }
 
+    /**
+     * Sets the text above the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#updateText()} if there are the same amount of lines or
+     * {@link NPC#forceUpdateText()} if there are different amount of lines, to show it to the {@link Player}
+     *
+     * @param text The text above the NPC, it will be only one line.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#updateText()
+     * @see NPC#forceUpdateText()
+     */
     public NPC setText(@Nonnull String text){
         return setText(text);
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets the glowing color of the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @param color The glowing color.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     * @see NPC#setGlowing(boolean)
+     * @see NPC#setGlowing(boolean, ChatColor)
+     */
     public NPC setGlowingColor(@Nullable ChatColor color){
         if(color == null) color = ChatColor.WHITE;
-        Validate.isTrue(color.isColor(), "Error setting glow color. Can not be a color format.");
+        Validate.isTrue(color.isColor(), "Error setting glow color. It's not a color.");
         this.color = ColorUtils.getEnumChatFormat(color);
         return this;
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets the glowing color of the {@link NPC}, and if it's glowing or not.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @param glowing Whether it's glowing or not.
+     * @param color The glowing color.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     * @see NPC#setGlowingColor(ChatColor)
+     * @see NPC#setGlowing(boolean)
+     */
     public NPC setGlowing(boolean glowing, @Nullable ChatColor color){
         setGlowing(glowing);
         setGlowingColor(color);
         return this;
     }
 
+    /**
+     * Sets if the {@link NPC} is glowing or not.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
+     *
+     * @param glowing Whether it's glowing or not.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#update()
+     * @see NPC#setGlowingColor(ChatColor)
+     * @see NPC#setGlowing(boolean, ChatColor)
+     */
     public NPC setGlowing(boolean glowing){
         this.glowing = glowing;
         return this;
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets the custom tab list name {@link NPC}, and if it's showing or not.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @param name The name will be visible at tab list. "{UUID}" will replace the uuid of the NPC. It cannot be larger
+     *             than 16 characters, and it can be the same as another NPC.
+     * @param show Whether it's showing or not.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     * @see NPC#setCustomTabListName(String)
+     * @see NPC#setShowOnTabList(boolean)
+     */
     public NPC setCustomTabListName(@Nullable String name, boolean show){
         setCustomTabListName(name);
         setShowOnTabList(show);
         return this;
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets if it's showing or not the custom name on tab list.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @param show Whether it's showing or not.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     * @see NPC#setCustomTabListName(String, boolean)
+     * @see NPC#setCustomTabListName(String)
+     */
     public NPC setShowOnTabList(boolean show){
         if(showOnTabList == show) return this;
         this.showOnTabList = show;
         return this;
     }
 
-    //FORCEUPDATE
+    /**
+     * Sets the custom tab list name {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
+     *
+     * @param name The name will be visible at tab list. "{UUID}" will replace the uuid of the NPC. It cannot be larger
+     *             than 16 characters, and it can be the same as another NPC.
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#forceUpdate()
+     * @see NPC#setCustomTabListName(String, boolean)
+     * @see NPC#setShowOnTabList(boolean)
+     */
     public NPC setCustomTabListName(@Nullable String name){
         if(name == null) name = DEFAULT_TAB_NAME;
         final String finalName = getReplacedCustomName(name);
         Validate.isTrue(finalName.length() <= 16, "Error setting custom tab list name. Name must be 16 or less characters.");
-        //Validate.isTrue(entityPlayer == null, "Error setting custom tab list name. NPC must be not created.");
         Validate.isTrue(getNpcLib().getNPCPlayerManager(player).getNPCs(world).stream().filter(x-> x.getReplacedCustomName().equals(finalName)).findAny().orElse(null) == null, "Error setting custom tab list name. There's another NPC with that name already.");
         this.customTabListName = finalName;
         return this;
     }
 
+    /**
+     * Sets the following look type of the {@link NPC}.
+     *
+     * @return The {@link NPC} instance.
+     *
+     */
     public NPC setFollowLookType(@Nullable FollowLookType followLookType) {
         if(followLookType == null) followLookType = FollowLookType.NONE;
         this.followLookType = followLookType;
         return this;
     }
 
+    /**
+     * Sets the distance of auto hide of the {@link NPC}.
+     *
+     * @return The {@link NPC} instance.
+     *
+     */
     public NPC setHideDistance(double hideDistance) {
         this.hideDistance = hideDistance;
         return this;
@@ -778,11 +978,17 @@ public class NPC {
                              Getters
     */
 
+    /**
+     * @return if the NPC is in view (fov of 60) to the player.
+     */
     public boolean isInView(){
         Vector dir = getLocation().toVector().subtract(player.getEyeLocation().toVector()).normalize();
         return dir.dot(player.getEyeLocation().getDirection()) >= Math.cos(Math.toRadians(60.0D));
     }
 
+    /**
+     * @return if the NPC is at the hideDistance or less, and in the same world.
+     */
     public boolean isInRange(){
         if(!getWorld().getName().equals(player.getWorld().getName())) return false;
         return getLocation().distance(player.getLocation()) < hideDistance;
@@ -918,7 +1124,18 @@ public class NPC {
                     Enums
      */
 
+    /**
+     * Set the follow look type to the NPC with {@link NPC#setFollowLookType(FollowLookType)}
+     */
     public enum FollowLookType{
-        NONE, PLAYER, NEAREST_PLAYER, NEAREST_ENTITY,
+        /** The NPC will not move the look direction automatically. */
+        NONE,
+        /** The NPC will move the look direction automatically to the player that see the NPC. */
+        PLAYER,
+        /** The NPC will move the look direction automatically to the nearest player to the NPC location. */
+        NEAREST_PLAYER,
+        /** The NPC will move the look direction automatically to the nearest entity to the NPC location. */
+        NEAREST_ENTITY,
+        ;
     }
 }
