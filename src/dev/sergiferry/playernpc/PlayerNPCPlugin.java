@@ -34,7 +34,6 @@ public class PlayerNPCPlugin extends JavaPlugin{
         }));
         new NPCCommand(this);
         npcLib.onEnable(this);
-        new Test(this);
         new UpdateChecker(this, spigotResourceID).getLatestVersion(version -> {
             if(this.getDescription().getVersion().equalsIgnoreCase(version)) return;
             this.lastSpigotVersion = version;
