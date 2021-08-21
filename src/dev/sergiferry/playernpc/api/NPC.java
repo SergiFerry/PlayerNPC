@@ -609,30 +609,70 @@ public class NPC {
         return setSkin((NPCSkin) null);
     }
 
+    /**
+     * Sets the {@link NPCPose} of the {@link NPC}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
+     *
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#update()
+     */
     public NPC setPose(NPCPose npcPose){
         if(npcPose == null) npcPose = NPCPose.STANDING;
         this.npcPose = npcPose;
         return this;
     }
 
+    /**
+     * Sets the {@link NPCPose} of the {@link NPC} as {@link NPCPose#CROUCHING}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
+     *
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#update()
+     */
     public NPC setCrouching(boolean b){
         if(b) return setPose(NPCPose.CROUCHING);
         else if(this.npcPose.equals(NPCPose.CROUCHING)) return resetPose();
         return this;
     }
 
+    /**
+     * Sets the {@link NPCPose} of the {@link NPC} as {@link NPCPose#SWIMMING}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
+     *
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#update()
+     */
     public NPC setSwimming(boolean b){
         if(b) return setPose(NPCPose.SWIMMING);
         else if(this.npcPose.equals(NPCPose.SWIMMING)) return resetPose();
         return this;
     }
 
+    /**
+     * Sets the {@link NPCPose} of the {@link NPC} as {@link NPCPose#SLEEPING}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
+     *
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#update()
+     */
     public NPC setSleeping(boolean b){
         if(b) return setPose(NPCPose.SLEEPING);
         else if(this.npcPose.equals(NPCPose.SLEEPING)) return resetPose();
         return this;
     }
 
+    /**
+     * Sets the {@link NPCPose} of the {@link NPC} as {@link NPCPose#STANDING}.
+     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
+     *
+     * @return The {@link NPC} instance.
+     *
+     * @see NPC#update()
+     */
     public NPC resetPose(){
         return setPose(NPCPose.STANDING);
     }
