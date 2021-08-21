@@ -10,13 +10,16 @@ import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutEntityDestroy;
 import dev.sergiferry.playernpc.utils.ColorUtils;
 import dev.sergiferry.playernpc.utils.SkinFetcher;
 import net.minecraft.EnumChatFormat;
+import net.minecraft.core.BlockPosition;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.*;
 import net.minecraft.network.syncher.DataWatcher;
+import net.minecraft.network.syncher.DataWatcherRegistry;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.EntityPlayer;
 import net.minecraft.server.level.WorldServer;
 import net.minecraft.server.network.PlayerConnection;
+import net.minecraft.world.entity.EntityPose;
 import net.minecraft.world.entity.EnumItemSlot;
 import net.minecraft.world.scores.Scoreboard;
 import net.minecraft.world.scores.ScoreboardTeam;
@@ -67,6 +70,7 @@ public class NPC {
     private boolean showOnTabList;
     private String customTabListName;
     private boolean shownOnTabList;
+    private NPCPose npcPose;
 
     /**
      * This constructor can only be invoked by using {@link NPCLib#generateNPC(Player, String, Location)}
@@ -115,6 +119,7 @@ public class NPC {
         this.slots = new HashMap<>();
         this.showOnTabList = false;
         this.shownOnTabList = false;
+        this.npcPose = NPCPose.STANDING;
         this.customTabListName = DEFAULT_TAB_NAME; //The placeholder {uuid} will be replaced by a random id.
         npcLib.getNPCPlayerManager(player).set(code, this);
         Bukkit.getScheduler().scheduleSyncDelayedTask(npcLib.getPlugin(), ()-> {
@@ -165,6 +170,7 @@ public class NPC {
         this.entityPlayer = new EntityPlayer(server, worldServer, gameProfile);
         entityPlayer.setLocation(x, y, z, yaw, pitch);
         updateSkin();
+        updatePose();
         updateScoreboard();
         return this;
     }
@@ -190,6 +196,7 @@ public class NPC {
             showToPlayer();
             return this;
         }
+        updatePose();
         updateLook();
         updateSkin();
         updateLocation();
@@ -602,6 +609,34 @@ public class NPC {
         return setSkin((NPCSkin) null);
     }
 
+    public NPC setPose(NPCPose npcPose){
+        if(npcPose == null) npcPose = NPCPose.STANDING;
+        this.npcPose = npcPose;
+        return this;
+    }
+
+    public NPC setCrouching(boolean b){
+        if(b) return setPose(NPCPose.CROUCHING);
+        else if(this.npcPose.equals(NPCPose.CROUCHING)) return resetPose();
+        return this;
+    }
+
+    public NPC setSwimming(boolean b){
+        if(b) return setPose(NPCPose.SWIMMING);
+        else if(this.npcPose.equals(NPCPose.SWIMMING)) return resetPose();
+        return this;
+    }
+
+    public NPC setSleeping(boolean b){
+        if(b) return setPose(NPCPose.SLEEPING);
+        else if(this.npcPose.equals(NPCPose.SLEEPING)) return resetPose();
+        return this;
+    }
+
+    public NPC resetPose(){
+        return setPose(NPCPose.STANDING);
+    }
+
     /**
      * Clears the text above the {@link NPC}.
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
@@ -832,6 +867,31 @@ public class NPC {
         return this;
     }
 
+
+    private NPC updatePose(){
+        if(npcPose.equals(NPCPose.SLEEPING)) entityPlayer.e(new BlockPosition(x, y, z));
+        entityPlayer.setPose(npcPose.getEntityPose());
+        return this;
+    }
+
+    protected NPC updateMove(){
+        if(player == null) return this;
+        if(entityPlayer == null) return this;
+        if(!canSee) return this;
+        if(!hiddenToPlayer && !isInRange()){
+            hideToPlayer();
+            return this;
+        }
+        if(hiddenToPlayer && isInRange() && isInView()){
+            showToPlayer();
+            return this;
+        }
+        updateLook();
+        updatePlayerRotation();
+        updateLocation();
+        return this;
+    }
+
     private NPC updateLook(){
         if(followLookType.equals(FollowLookType.PLAYER)) lookAt(player);
         else if(followLookType.equals(FollowLookType.NEAREST_PLAYER) || followLookType.equals(FollowLookType.NEAREST_ENTITY)){
@@ -911,6 +971,9 @@ public class NPC {
             else item.a((byte) (initialBitMask & ~(1 << bitMaskIndex)));
             bitMaskIndex = (byte) 0x01;
             item.a((byte) (initialBitMask & ~(1 << bitMaskIndex)));
+            //
+            byte b = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40;
+            dataWatcher.set(DataWatcherRegistry.a.a(17), b);
             //
             PacketPlayOutEntityMetadata metadataPacket = new PacketPlayOutEntityMetadata(entityPlayer.getId(), dataWatcher, true);
             PlayerConnection connection = NMSCraftPlayer.getPlayerConnection(player);
@@ -1108,6 +1171,10 @@ public class NPC {
         return followLookType;
     }
 
+    public NPCPose getPose() {
+        return npcPose;
+    }
+
     private String getReplacedCustomName(){
         return getReplacedCustomName(customTabListName, entityPlayer.getProfile().getId());
     }
@@ -1137,5 +1204,23 @@ public class NPC {
         /** The NPC will move the look direction automatically to the nearest entity to the NPC location. */
         NEAREST_ENTITY,
         ;
+    }
+
+    public enum NPCPose{
+        STANDING(EntityPose.a),
+        SLEEPING(EntityPose.c),
+        SWIMMING(EntityPose.d),
+        CROUCHING(EntityPose.f),
+        ;
+
+        private EntityPose entityPose;
+
+        NPCPose(EntityPose entityPose){
+            this.entityPose = entityPose;
+        }
+
+        public EntityPose getEntityPose() {
+            return entityPose;
+        }
     }
 }

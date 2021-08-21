@@ -52,7 +52,7 @@ public class NPCPlayerManager {
 
     protected void updateMove(){
         getNPCs(getPlayer().getWorld()).forEach(x->{
-            if(x.isCreated()) x.update();
+            if(x.isCreated()) x.updateMove();
         });
     }
 

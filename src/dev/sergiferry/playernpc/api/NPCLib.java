@@ -31,12 +31,16 @@ public class NPCLib implements Listener {
     private final Plugin plugin;
     private final HashMap<Player, NPCPlayerManager> playerManager;
     private Double hideDistance;
+    private UpdateLookType updateLookType;
+    private Integer updateLookTicks;
 
     public NPCLib(PlayerNPCPlugin plugin){
         this.plugin = plugin;
         this.playerManager = new HashMap<>();
         instance = this;
         hideDistance = 50.0;
+        updateLookType = UpdateLookType.MOVE_EVENT;
+        updateLookTicks = 5;
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
     }
 
@@ -132,6 +136,27 @@ public class NPCLib implements Listener {
         npcPlayerManager.getPacketReader().unInject();
     }
 
+    public UpdateLookType getUpdateLookType() {
+        return updateLookType;
+    }
+
+    private Integer taskID;
+
+    public void setUpdateLookTicks(Integer ticks){
+        this.updateLookTicks = ticks;
+        setUpdateLookType(UpdateLookType.TICKS);
+    }
+
+    public void setUpdateLookType(UpdateLookType updateLookType) {
+        this.updateLookType = updateLookType;
+        if(taskID != null) getPlayerNPCPlugin().getServer().getScheduler().cancelTask(taskID);
+        if(updateLookType.equals(UpdateLookType.TICKS)){
+            taskID = getPlayerNPCPlugin().getServer().getScheduler().runTaskTimerAsynchronously(getPlayerNPCPlugin(), () -> {
+                Bukkit.getOnlinePlayers().forEach(x-> getAllNPCs(x).forEach(y-> y.updateMove()));
+            }, updateLookTicks, updateLookTicks).getTaskId();
+        }
+    }
+
     @EventHandler
     private void onJoin(PlayerJoinEvent event){
         join(event.getPlayer());
@@ -165,9 +190,16 @@ public class NPCLib implements Listener {
 
     @EventHandler
     private void onMove(PlayerMoveEvent event){
+        if(!getUpdateLookType().equals(UpdateLookType.MOVE_EVENT)) return;
         if(event.getFrom().getBlockX() == event.getTo().getBlockX() && event.getFrom().getBlockY() == event.getTo().getBlockY() && event.getFrom().getBlockZ() == event.getTo().getBlockZ()) return;
         Player player = event.getPlayer();
         getNPCPlayerManager(player).updateMove();
+    }
+
+    public enum UpdateLookType{
+        MOVE_EVENT,
+        TICKS,
+        ;
     }
 
 }

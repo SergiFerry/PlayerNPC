@@ -2,6 +2,7 @@ package dev.sergiferry.playernpc.nms.minecraft;
 
 import dev.sergiferry.playernpc.nms.NMSUtils;
 import net.minecraft.network.protocol.game.PacketPlayOutEntityDestroy;
+import org.apache.commons.lang.Validate;
 
 import java.lang.reflect.Constructor;
 
@@ -23,12 +24,11 @@ public class NMSPacketPlayOutEntityDestroy {
         }
     }
 
-    public static PacketPlayOutEntityDestroy createPacket(int... ids){
-        if(isSingleConstructor() && ids.length > 1) throw new IllegalArgumentException("Error at NMSPacketPlayOutEntityDestroy, caused because in 1.17 version cannot be more than one id at the packet.");
+    public static PacketPlayOutEntityDestroy createPacket(int id){
         PacketPlayOutEntityDestroy packet;
         try{
-            if(isSingleConstructor()) packet = (PacketPlayOutEntityDestroy) constructor.newInstance(ids[0]);
-            else packet = (PacketPlayOutEntityDestroy) constructor.newInstance(ids);
+            if(isSingleConstructor()) packet = (PacketPlayOutEntityDestroy) constructor.newInstance(id);
+            else packet = (PacketPlayOutEntityDestroy) constructor.newInstance(new int[]{id});
         }
         catch (Exception e){ packet = null; }
         return packet;

@@ -247,6 +247,27 @@ public class NPCCommand extends CommandInstance{
             }
             return;
         }
+        else if(args[0].equals(NPCCommands.SETPOSE.getArgument())){
+            if(args.length < 4){
+                error(sender, "Use " + NPCCommands.SETPOSE.getCommand(npc));
+                return;
+            }
+            try{
+                NPC.NPCPose npcPose = NPC.NPCPose.valueOf(args[3].toUpperCase());
+                if(npc.getPose() == npcPose){
+                    error(sender, "The pose was §e" + npcPose.name().toLowerCase() + "§7 yet");
+                    return;
+                }
+                npc.setPose(npcPose);
+                sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set pose as §e" + npcPose.name().toLowerCase());
+                if(npc.isCreated()){
+                    new ClickableText("§7You need to do §e" + NPCCommands.UPDATE.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.UPDATE.getCommand(npc)).send(sender);
+                }
+            }
+            catch (Exception e){
+                error(sender, "The pose is not valid");
+            }
+        }
         else if(args[0].equals(NPCCommands.SETSKIN.getArgument())){
             if(args.length < 4){
                 error(sender, "Use " + NPCCommands.SETSKIN.getCommand(npc));
@@ -713,6 +734,21 @@ public class NPCCommand extends CommandInstance{
                         "\n§8• §a(id) §7The ID of the NPC you decided on generation." +
                         "\n§8• §a(boolean) §7Value that can be true or false."
         ),
+        SETPOSE(
+                "setpose",
+                "(player) (id) (npcpose)",
+                false,
+                "Set pose of an NPC",
+
+                "\n§7This sets the pose of an NPC" +
+                        "\n§7No need to set it. By default will be STANDING." +
+                        "\n§7Poses: standing, swimming, crouching, sleeping" +
+                        "\n" +
+                        "\n§7Variables:" +
+                        "\n§8• §a(player) §7The name of the player that will see the NPC" +
+                        "\n§8• §a(id) §7The ID of the NPC you decided on generation." +
+                        "\n§8• §a(npcpose) §7The pose of the NPC."
+        ),
         HIDE(
                 "hide",
                 "(player) (id)",
@@ -963,6 +999,11 @@ class NPCCommandCompleter implements TabCompleter {
             if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETFOLLOWLOOKTYPE.getArgument())){
                 if(args.length == 4){
                     Arrays.stream(NPC.FollowLookType.values()).filter(x-> x.name().toLowerCase().startsWith(args[3].toLowerCase())).forEach(x-> strings.add(x.name().toLowerCase()));
+                }
+            }
+            if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETPOSE.getArgument())){
+                if(args.length == 4){
+                    Arrays.stream(NPC.NPCPose.values()).filter(x-> x.name().toLowerCase().startsWith(args[3].toLowerCase())).forEach(x-> strings.add(x.name().toLowerCase()));
                 }
             }
             if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.LOOKAT.getArgument())){
