@@ -4,7 +4,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
-import dev.sergiferry.playernpc.nms.craftbukkit.NMSCraftPlayer;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
 import net.minecraft.server.level.EntityPlayer;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -48,7 +48,7 @@ public class SkinFetcher {
         return UUID.fromString(getUUIDstring(name));
     }
 
-    public static String getUUIDstring(String name) {
+    private static String getUUIDstring(String name) {
         try {
             URL url = new URL("https://api.mojang.com/users/profiles/minecraft/" + name);
             InputStreamReader reader = new InputStreamReader(url.openStream());

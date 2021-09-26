@@ -1,23 +1,24 @@
-package dev.sergiferry.playernpc.command;
+package dev.sergiferry.spigot.commands;
 
-import dev.sergiferry.playernpc.PlayerNPCPlugin;
+import dev.sergiferry.spigot.SpigotPlugin;
 import org.bukkit.command.*;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Creado por SergiFerry el 26/06/2021
+ * Creado por SergiFerry el 06/07/2021
  */
 public abstract class CommandInstance implements CommandInterface, CommandExecutor {
 
-    private Plugin plugin;
+    private SpigotPlugin plugin;
     private String commandLabel;
 
-    public CommandInstance(Plugin plugin, String commandLabel) {
+    public CommandInstance(SpigotPlugin plugin, String commandLabel) {
         this.plugin = plugin;
-        this.commandLabel = commandLabel;
+        this.commandLabel = commandLabel.toLowerCase();
         getCommand().setExecutor(this);
     }
 
@@ -27,16 +28,27 @@ public abstract class CommandInstance implements CommandInterface, CommandExecut
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (label.equalsIgnoreCase(commandLabel))
+        if (isCommand(label))
             onExecute(sender, command, label, args);
         return true;
     }
 
-    public PluginCommand getCommand() {
-        return plugin.getServer().getPluginCommand(getCommandLabel());
+    public boolean isCommand(String s){
+        s = s.toLowerCase();
+        if(s.equals(commandLabel) || s.equals(getCommand().getPlugin().getName().toLowerCase() + ":" + commandLabel)) return true;
+        for(String aliases : getCommand().getAliases()){
+            String a = aliases.toLowerCase();
+            if(s.equals(a)) return true;
+            if(s.equals(getCommand().getPlugin().getName().toLowerCase() + ":" + a)) return true;
+        }
+        return false;
     }
 
-    public Plugin getPlugin() {
+    public PluginCommand getCommand() {
+        return plugin.getCommand(getCommandLabel());
+    }
+
+    public SpigotPlugin getPlugin() {
         return plugin;
     }
 
@@ -65,7 +77,7 @@ class EmptyTabCompleter implements TabCompleter {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String label, String[] args) {
-        if (!label.equalsIgnoreCase(getCommandInstance().getCommandLabel())) return null;
+        if (!commandInstance.isCommand(label)) return null;
         return new ArrayList<>();
     }
 

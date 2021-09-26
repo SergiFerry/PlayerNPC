@@ -1,6 +1,6 @@
-package dev.sergiferry.playernpc.nms.craftbukkit;
+package dev.sergiferry.spigot.nms.craftbukkit;
 
-import dev.sergiferry.playernpc.nms.NMSUtils;
+import dev.sergiferry.spigot.nms.NMSUtils;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.server.level.EntityPlayer;
 import net.minecraft.server.network.PlayerConnection;
@@ -13,14 +13,14 @@ import java.util.Arrays;
 /**
  * Creado por SergiFerry el 04/07/2021
  */
-public class NMSCraftPlayer {
+public class NMSCraftPlayer{
 
     private static Class<?> craftPlayerClass;
     private static Method craftPlayerGetHandle;
     private static Field playerConnectionField;
     private static Method sendPacketMethod;
 
-    public static void load() throws ClassNotFoundException, NoSuchMethodException, NoSuchFieldException {
+    protected static void load() throws ClassNotFoundException, NoSuchMethodException, NoSuchFieldException {
         craftPlayerClass = NMSUtils.getCraftBukkitClass("entity.CraftPlayer");
         craftPlayerGetHandle = craftPlayerClass.getMethod("getHandle", new Class[0]);
         playerConnectionField = craftPlayerGetHandle.getReturnType().getField("b");
@@ -57,4 +57,3 @@ public class NMSCraftPlayer {
         return sendPacketMethod;
     }
 }
-

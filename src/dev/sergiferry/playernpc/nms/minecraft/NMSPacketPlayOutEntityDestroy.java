@@ -1,8 +1,7 @@
 package dev.sergiferry.playernpc.nms.minecraft;
 
-import dev.sergiferry.playernpc.nms.NMSUtils;
+import dev.sergiferry.spigot.nms.NMSUtils;
 import net.minecraft.network.protocol.game.PacketPlayOutEntityDestroy;
-import org.apache.commons.lang.Validate;
 
 import java.lang.reflect.Constructor;
 

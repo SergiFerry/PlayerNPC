@@ -6,7 +6,7 @@ import java.text.DecimalFormatSymbols;
 import java.util.Locale;
 
 /**
- * Creado por SergiFerry el 26/06/2021
+ * Creado por SergiFerry el 07/07/2021
  */
 public class MathUtils {
 

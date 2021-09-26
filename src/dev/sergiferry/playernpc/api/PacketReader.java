@@ -1,7 +1,7 @@
 package dev.sergiferry.playernpc.api;
 
 import dev.sergiferry.playernpc.api.events.NPCInteractEvent;
-import dev.sergiferry.playernpc.nms.craftbukkit.NMSCraftPlayer;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToMessageDecoder;

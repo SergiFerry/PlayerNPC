@@ -1,6 +1,6 @@
 package dev.sergiferry.playernpc.nms.craftbukkit;
 
-import dev.sergiferry.playernpc.nms.NMSUtils;
+import dev.sergiferry.spigot.nms.NMSUtils;
 import org.bukkit.inventory.ItemStack;
 
 import java.lang.reflect.Method;

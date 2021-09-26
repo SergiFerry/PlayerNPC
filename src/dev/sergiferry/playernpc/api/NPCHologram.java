@@ -1,7 +1,7 @@
 package dev.sergiferry.playernpc.api;
 
-import dev.sergiferry.playernpc.nms.craftbukkit.NMSCraftPlayer;
-import dev.sergiferry.playernpc.nms.craftbukkit.NMSCraftWorld;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftWorld;
 import net.minecraft.network.chat.ChatMessage;
 import net.minecraft.network.protocol.game.PacketPlayOutEntityDestroy;
 import net.minecraft.network.protocol.game.PacketPlayOutEntityMetadata;
@@ -70,7 +70,7 @@ public class NPCHologram {
             break;
         }
         WorldServer world = null;
-        try{ world = (WorldServer)NMSCraftWorld.getCraftWorldGetHandle().invoke(NMSCraftWorld.getCraftWorldClass().cast(location.getWorld()), new Object[0]);}catch (Exception e){}
+        try{ world = (WorldServer) NMSCraftWorld.getCraftWorldGetHandle().invoke(NMSCraftWorld.getCraftWorldClass().cast(location.getWorld()), new Object[0]);}catch (Exception e){}
         Validate.notNull(world, "Error at NMSCraftWorld");
         EntityArmorStand armor = new EntityArmorStand(world, location.getX(), location.getY() - 0.27 * line, location.getZ());
         armor.setCustomNameVisible(true);

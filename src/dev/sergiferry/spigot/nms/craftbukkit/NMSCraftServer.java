@@ -1,23 +1,21 @@
-package dev.sergiferry.playernpc.nms.craftbukkit;
+package dev.sergiferry.spigot.nms.craftbukkit;
 
-import dev.sergiferry.playernpc.nms.NMSUtils;
+import dev.sergiferry.spigot.nms.NMSUtils;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.PlayerConnection;
 import org.bukkit.Bukkit;
 import org.bukkit.Server;
 
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 /**
- * Creado por SergiFerry el 04/07/2021
+ * Creado por SergiFerry el 25/09/2021
  */
 public class NMSCraftServer {
 
     private static Class<?> craftServerClass;
     private static Method craftServerGetServer;
 
-    public static void load() throws ClassNotFoundException, NoSuchMethodException, NoSuchFieldException {
+    protected static void load() throws ClassNotFoundException, NoSuchMethodException, NoSuchFieldException {
         craftServerClass = NMSUtils.getCraftBukkitClass("CraftServer");
         craftServerGetServer = craftServerClass.getMethod("getServer", new Class[0]);
     }
@@ -39,4 +37,3 @@ public class NMSCraftServer {
         return getMinecraftServer(Bukkit.getServer());
     }
 }
-

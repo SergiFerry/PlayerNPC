@@ -1,6 +1,5 @@
-package dev.sergiferry.playernpc.updater;
-
-import dev.sergiferry.playernpc.PlayerNPCPlugin;
+package dev.sergiferry.spigot.updater;
+import dev.sergiferry.spigot.SpigotPlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.Plugin;
 
@@ -12,24 +11,23 @@ import java.util.function.Consumer;
 
 public class UpdateChecker {
 
-    private Plugin plugin;
-    private int resourceID;
+    private SpigotPlugin plugin;
 
-    public UpdateChecker(Plugin plugin, int resourceID) {
+    public UpdateChecker(SpigotPlugin plugin) {
         this.plugin = plugin;
-        this.resourceID = resourceID;
     }
 
     public void getLatestVersion(Consumer<String> consumer){
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->{
             try{
-                InputStream inputStream = new URL("https://api.spigotmc.org/legacy/update.php?resource=" + this.resourceID).openStream();
+                InputStream inputStream = new URL("https://api.spigotmc.org/legacy/update.php?resource=" + plugin.getSpigotResourceID()).openStream();
                 Scanner scanner = new Scanner(inputStream);
                 if(scanner.hasNext()) consumer.accept(scanner.next());
             }
             catch (IOException exception){
-                plugin.getServer().getConsoleSender().sendMessage("§cUnable to check for updates. Please visit " + ((PlayerNPCPlugin) plugin).getSpigotResource());
+                plugin.getServer().getConsoleSender().sendMessage("§cUnable to check for updates. Please visit " + plugin.getSpigotResource());
             }
         });
     }
+
 }

@@ -1,13 +1,15 @@
-package dev.sergiferry.playernpc.nms;
+package dev.sergiferry.spigot.nms;
 
-import dev.sergiferry.playernpc.nms.craftbukkit.*;
-import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutEntityDestroy;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftServer;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftWorld;
 import org.bukkit.Bukkit;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
 /**
- * Creado por SergiFerry el 06/07/2021
+ * Creado por SergiFerry el 04/07/2021
  */
 public class NMSUtils {
 
@@ -16,14 +18,11 @@ public class NMSUtils {
     public static void load() {
         version = Bukkit.getServer().getClass().getPackage().getName().replace(".", ",").split(",")[3];
         try {
-            //CraftBukkit
-            NMSCraftPlayer.load();
-            NMSCraftWorld.load();
-            NMSCraftServer.load();
-            NMSCraftItemStack.load();
-            NMSCraftScoreboard.load();
             //Minecraft Server
-            NMSPacketPlayOutEntityDestroy.load();
+            //CraftBukkit
+            loadNMS(NMSCraftPlayer.class);
+            loadNMS(NMSCraftWorld.class);
+            loadNMS(NMSCraftServer.class);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -37,9 +36,25 @@ public class NMSUtils {
         return Class.forName("net.minecraft." + nmsClassString);
     }
 
+    public static Class<?> getClass(String nmsClassString) throws ClassNotFoundException{
+        return Class.forName(nmsClassString);
+    }
+
     public static Class<?> getNMSClass(String prefix, String nmsClassString) throws ClassNotFoundException {
         String name = prefix + "." + version + "." + nmsClassString;
         return Class.forName(name);
+    }
+
+    public static void loadNMS(Class<?> c){
+        try{
+            Method method = c.getDeclaredMethod("load", null);
+            method.setAccessible(true);
+            method.invoke(null, new Object[0]);
+        }
+        catch (Exception e){
+            Bukkit.getConsoleSender().sendMessage("§b§lNMS §8| §cError loading " + c.getSimpleName() );
+            e.printStackTrace();
+        }
     }
 
     public static String getVersion() {

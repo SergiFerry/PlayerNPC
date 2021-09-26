@@ -44,7 +44,7 @@ public class NPCLib implements Listener {
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
     }
 
-    public Plugin getPlugin() {
+    protected Plugin getPlugin() {
         return plugin;
     }
 
@@ -103,11 +103,11 @@ public class NPCLib implements Listener {
         this.hideDistance = hideDistance;
     }
 
-    public void onEnable(PlayerNPCPlugin playerNPCPlugin){
+    private void onEnable(PlayerNPCPlugin playerNPCPlugin){
         playerNPCPlugin.getServer().getOnlinePlayers().forEach(x-> join(x));
     }
 
-    public void onDisable(PlayerNPCPlugin playerNPCPlugin){
+    private void onDisable(PlayerNPCPlugin playerNPCPlugin){
         playerNPCPlugin.getServer().getOnlinePlayers().forEach(x-> quit(x));
     }
 
@@ -147,7 +147,8 @@ public class NPCLib implements Listener {
         setUpdateLookType(UpdateLookType.TICKS);
     }
 
-    public void setUpdateLookType(UpdateLookType updateLookType) {
+    public void setUpdateLookType(@Nonnull UpdateLookType updateLookType) {
+        Validate.notNull(updateLookType, "Update look type must be not null");
         this.updateLookType = updateLookType;
         if(taskID != null) getPlayerNPCPlugin().getServer().getScheduler().cancelTask(taskID);
         if(updateLookType.equals(UpdateLookType.TICKS)){

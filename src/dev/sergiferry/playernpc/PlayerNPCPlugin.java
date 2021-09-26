@@ -3,60 +3,66 @@ package dev.sergiferry.playernpc;
 import dev.sergiferry.playernpc.api.NPC;
 import dev.sergiferry.playernpc.api.NPCLib;
 import dev.sergiferry.playernpc.command.NPCCommand;
-import dev.sergiferry.playernpc.metrics.Metrics;
-import dev.sergiferry.playernpc.nms.NMSUtils;
-import dev.sergiferry.playernpc.updater.UpdateChecker;
-import org.bukkit.plugin.java.JavaPlugin;
+import dev.sergiferry.playernpc.nms.craftbukkit.NMSCraftItemStack;
+import dev.sergiferry.playernpc.nms.craftbukkit.NMSCraftScoreboard;
+import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutEntityDestroy;
+import dev.sergiferry.spigot.SpigotPlugin;
+import dev.sergiferry.spigot.metrics.Metrics;
+import dev.sergiferry.spigot.nms.NMSUtils;
+import org.bukkit.Bukkit;
 
+import java.lang.reflect.Method;
 import java.util.HashSet;
 import java.util.Set;
 
-public class PlayerNPCPlugin extends JavaPlugin{
+public class PlayerNPCPlugin extends SpigotPlugin {
 
-    private static final String PREFIX = "§6§lPlayer NPC §8| §7";
+    private static PlayerNPCPlugin instance;
 
     private NPCLib npcLib;
-    private Metrics metrics;
-    private String lastSpigotVersion;
-    private int spigotResourceID;
-    private int bStatsResourceID;
 
-    public void onEnable() {
-        NMSUtils.load();
+    public PlayerNPCPlugin() {
+        super(93625);
+        instance = this;
+    }
+
+    @Override
+    public void enable() {
+        NMSUtils.loadNMS(NMSCraftItemStack.class);
+        NMSUtils.loadNMS(NMSCraftScoreboard.class);
+        NMSUtils.loadNMS(NMSPacketPlayOutEntityDestroy.class);
+        setPrefix("§6§lPlayer NPC §8| §7");
         this.npcLib = new NPCLib(this);
-        this.spigotResourceID = 93625;
-        this.bStatsResourceID = 11918;
-        this.metrics = new Metrics(this, bStatsResourceID);
-        metrics.addCustomChart(new Metrics.SingleLineChart("npcs", () -> {
+        new NPCCommand(this);
+        callPrivate("onEnable");
+        setupMetrics(11918);
+        super.getMetrics().addCustomChart(new Metrics.SingleLineChart("npcs", () -> {
             Set<NPC> npcSet = new HashSet<>();
             getServer().getOnlinePlayers().forEach(x-> npcSet.addAll(npcLib.getAllNPCs(x)));
             return npcSet.size();
         }));
-        new NPCCommand(this);
-        npcLib.onEnable(this);
-        new UpdateChecker(this, spigotResourceID).getLatestVersion(version -> {
-            if(this.getDescription().getVersion().equalsIgnoreCase(version)) return;
-            this.lastSpigotVersion = version;
-            getServer().getConsoleSender().sendMessage("§e" + getDescription().getName() + " version " + version + " is available (currently running " + getDescription().getVersion() + ").§7\n§ePlease download it at " + getSpigotResource());
-        });
     }
 
-    public void onDisable(){
-        npcLib.onDisable(this);
+    @Override
+    public void disable() {
+        callPrivate("onDisable");
     }
 
-    public static String getPrefix(){
-        return PREFIX;
-    }
-
-    public String getSpigotResource() { return "https://www.spigotmc.org/resources/" + getDescription().getName().toLowerCase() +"."  + spigotResourceID + "/"; }
-
-    public String getLastSpigotVersion() {
-        return lastSpigotVersion;
+    private void callPrivate(String m){
+        try{
+            Method method = NPCLib.class.getDeclaredMethod(m, PlayerNPCPlugin.class);
+            method.setAccessible(true);
+            method.invoke(npcLib, this);
+        }
+        catch (Exception e){}
     }
 
     public NPCLib getNPCLib() {
         return npcLib;
+    }
+
+    public static PlayerNPCPlugin getInstance() {
+        return instance;
     }
 
 }

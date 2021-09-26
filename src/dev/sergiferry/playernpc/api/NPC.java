@@ -9,6 +9,9 @@ import dev.sergiferry.playernpc.nms.craftbukkit.*;
 import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutEntityDestroy;
 import dev.sergiferry.playernpc.utils.ColorUtils;
 import dev.sergiferry.playernpc.utils.SkinFetcher;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftServer;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftWorld;
 import net.minecraft.EnumChatFormat;
 import net.minecraft.core.BlockPosition;
 import net.minecraft.network.protocol.Packet;
@@ -935,19 +938,21 @@ public class NPC {
     private NPC updateLook(){
         if(followLookType.equals(FollowLookType.PLAYER)) lookAt(player);
         else if(followLookType.equals(FollowLookType.NEAREST_PLAYER) || followLookType.equals(FollowLookType.NEAREST_ENTITY)){
-            Entity near = null;
-            double var0 = hideDistance;
-            final boolean var3 = followLookType.equals(FollowLookType.NEAREST_PLAYER);
-            final Location npcLocation = getLocation();
-            for(Entity entities : world.getNearbyEntities(npcLocation, hideDistance, hideDistance, hideDistance)){
-                if(var3 && !(entities instanceof Player)) continue;
-                double var1 = entities.getLocation().distance(npcLocation);
-                if(var1 > var0) continue;
-                near = entities;
-                var0 = var1;
-            }
-            if(near == null) return this;
-            lookAt(near);
+            Bukkit.getScheduler().scheduleSyncDelayedTask(getNpcLib().getPlugin(), ()-> {
+                Entity near = null;
+                double var0 = hideDistance;
+                final boolean var3 = followLookType.equals(FollowLookType.NEAREST_PLAYER);
+                final Location npcLocation = getLocation();
+                for(Entity entities : world.getNearbyEntities(npcLocation, hideDistance, hideDistance, hideDistance)){
+                    if(var3 && !(entities instanceof Player)) continue;
+                    double var1 = entities.getLocation().distance(npcLocation);
+                    if(var1 > var0) continue;
+                    near = entities;
+                    var0 = var1;
+                }
+                if(near == null) return;
+                lookAt(near);
+            });
         }
         return this;
     }

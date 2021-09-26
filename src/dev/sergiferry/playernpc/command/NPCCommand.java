@@ -5,9 +5,11 @@ import dev.sergiferry.playernpc.api.NPC;
 import dev.sergiferry.playernpc.api.NPCLib;
 import dev.sergiferry.playernpc.api.NPCSkin;
 import dev.sergiferry.playernpc.api.NPCSlot;
+import dev.sergiferry.spigot.SpigotPlugin;
+import dev.sergiferry.spigot.commands.CommandInstance;
 import dev.sergiferry.playernpc.utils.ClickableText;
-import dev.sergiferry.playernpc.utils.MathUtils;
 import dev.sergiferry.playernpc.utils.SkinFetcher;
+import dev.sergiferry.playernpc.utils.MathUtils;
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.BaseComponent;
 import net.md_5.bungee.api.chat.ClickEvent;
@@ -23,16 +25,15 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.plugin.Plugin;
 
 import java.util.*;
 
 /**
  * Creado por SergiFerry el 26/06/2021
  */
-public class NPCCommand extends CommandInstance{
+public class NPCCommand extends CommandInstance {
 
-    public NPCCommand(Plugin plugin) {
+    public NPCCommand(SpigotPlugin plugin) {
         super(plugin,"npc");
         setTabCompleter(new NPCCommandCompleter(this));
     }
@@ -499,7 +500,7 @@ public class NPCCommand extends CommandInstance{
             }
             int id = (i + ((pag - 1) * perpag));
             NPCCommands npcCommands = NPCCommands.values()[id];
-            new ClickableText("§8• " + (npcCommands.isImportant() ? "§6§l" : "§e") + npcCommands.getDescription(), (npcCommands.isImportant() ? "§6" : "§e") + npcCommands.getCommand() + "\n" + npcCommands.getHover() + "\n\n" + c(), new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, npcCommands.getCommand())).send(player);
+            new ClickableText("§8• ").add((npcCommands.isImportant() ? "§6§l" : "§e") + npcCommands.getDescription(), (npcCommands.isImportant() ? "§6" : "§e") + npcCommands.getCommand() + "\n" + npcCommands.getHover() + "\n\n" + c(), new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, npcCommands.getCommand())).send(player);
             aas++;
         }
         int ass = perpag - aas;
@@ -512,14 +513,15 @@ public class NPCCommand extends CommandInstance{
         if(!next && !previous) return;
         BaseComponent baseComponent = new TextComponent("  ");
         if(previous){
-            TextComponent componentChatMessage = new TextComponent("§c§l[PREVIOUS]  ");
+            TextComponent componentChatMessage = new TextComponent("§c§l[PREVIOUS]");
             componentChatMessage.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/npc help " + (pag - 1)));
             componentChatMessage.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text("§eClick to go to the previous page.")));
             baseComponent.addExtra(componentChatMessage);
         }
         else{
-            baseComponent.addExtra("§8§l[PREVIOUS]  ");
+            baseComponent.addExtra("§8§l[PREVIOUS]");
         }
+        baseComponent.addExtra("    ");
         if(next){
             TextComponent componentChatMessage = new TextComponent("§a§l[NEXT]");
             componentChatMessage.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/npc help " + (pag + 1)));

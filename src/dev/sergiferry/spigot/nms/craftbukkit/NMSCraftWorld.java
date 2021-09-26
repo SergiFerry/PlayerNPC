@@ -1,9 +1,8 @@
-package dev.sergiferry.playernpc.nms.craftbukkit;
+package dev.sergiferry.spigot.nms.craftbukkit;
 
-import dev.sergiferry.playernpc.nms.NMSUtils;
-import net.minecraft.server.MinecraftServer;
+import dev.sergiferry.spigot.nms.NMSUtils;
+import net.minecraft.core.BlockPosition;
 import net.minecraft.server.level.WorldServer;
-import org.bukkit.Server;
 import org.bukkit.World;
 
 import java.lang.reflect.Method;
@@ -11,14 +10,17 @@ import java.lang.reflect.Method;
 /**
  * Creado por SergiFerry el 04/07/2021
  */
+
 public class NMSCraftWorld {
 
     private static Class<?> craftWorldClass;
     private static Method craftWorldGetHandle;
+    private static Method craftWorldGetTileEntity;
 
-    public static void load() throws ClassNotFoundException, NoSuchMethodException {
+    protected static void load() throws ClassNotFoundException, NoSuchMethodException, NoSuchFieldException {
         craftWorldClass = NMSUtils.getCraftBukkitClass("CraftWorld");
         craftWorldGetHandle = craftWorldClass.getMethod("getHandle", new Class[0]);
+        craftWorldGetTileEntity = craftWorldGetHandle.getReturnType().getMethod("getTileEntity", new Class[] {BlockPosition.class});
     }
 
     public static WorldServer getWorldServer(World world){
@@ -33,5 +35,7 @@ public class NMSCraftWorld {
     public static Method getCraftWorldGetHandle() {
         return craftWorldGetHandle;
     }
+
+    public static Method getCraftWorldGetTileEntity() { return craftWorldGetTileEntity; }
 
 }
