@@ -2,7 +2,7 @@ main: dev.sergiferry.playernpc.PlayerNPCPlugin
 name: PlayerNPC
 description: PlayerNPC
 author: SergiFerry
-version: 2021.3
+version: 2021.4
 api-version: 1.17
 commands:
   npc:

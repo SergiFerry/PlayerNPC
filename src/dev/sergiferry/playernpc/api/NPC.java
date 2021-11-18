@@ -45,7 +45,7 @@ import java.util.*;
  * NPCs will be only visible to players after creating the EntityPlayer, and show it to the player.
  *
  * @author  SergiFerry
- * @since 1.0
+ * @since 2021.1
  */
 public class NPC {
 
@@ -742,7 +742,7 @@ public class NPC {
      * @see NPC#forceUpdateText()
      */
     public NPC setText(@Nonnull String text){
-        return setText(text);
+        return setText(Arrays.asList(text));
     }
 
     /**

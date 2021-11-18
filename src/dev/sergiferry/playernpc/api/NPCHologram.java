@@ -1,5 +1,6 @@
 package dev.sergiferry.playernpc.api;
 
+import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutEntityDestroy;
 import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
 import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftWorld;
 import net.minecraft.network.chat.ChatMessage;
@@ -53,12 +54,12 @@ public class NPCHologram {
         if (text == "") as.setCustomNameVisible(false);
     }
 
-    public String getLine(int line) {
+    protected String getLine(int line) {
         if(!lines.containsKey(line)) return "";
         return lines.get(line).getCustomName().getString();
     }
 
-    public boolean hasLine(int line){
+    protected boolean hasLine(int line){
         return lines.containsKey(line);
     }
 
@@ -98,7 +99,7 @@ public class NPCHologram {
         if(!canSee) return;
         PlayerConnection playerConnection = NMSCraftPlayer.getPlayerConnection(getPlayer());
         for (Integer in : lines.keySet()) {
-            playerConnection.sendPacket(new PacketPlayOutEntityDestroy(lines.get(in).getId()));
+            playerConnection.sendPacket(NMSPacketPlayOutEntityDestroy.createPacket(lines.get(in).getId()));
         }
         canSee = false;
     }
@@ -123,23 +124,23 @@ public class NPCHologram {
         this.text = text;
     }
 
-    public boolean isCreatedLine(Integer line){
+    protected boolean isCreatedLine(Integer line){
         return lines.containsKey(line);
     }
 
-    public boolean canSee(){
+    protected boolean canSee(){
         return canSee;
     }
 
-    public Player getPlayer(){
+    protected Player getPlayer(){
         return npc.getPlayer();
     }
 
-    public List<String> getText(){
+    protected List<String> getText(){
         return npc.getText();
     }
 
-    public NPC getNpc() {
+    protected NPC getNpc() {
         return npc;
     }
 }

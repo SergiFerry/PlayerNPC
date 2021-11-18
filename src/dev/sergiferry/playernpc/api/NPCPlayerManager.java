@@ -42,11 +42,11 @@ public class NPCPlayerManager {
         return npcs.values().stream().filter(x-> x.isCreated() && x.getEntityPlayer().getId() == entityID).findAny().orElse(null);
     }
 
-    public void removeNPC(String code){
+    protected void removeNPC(String code){
         npcs.remove(code);
     }
 
-    public Set<NPC> getNPCs(String prefix){
+    protected Set<NPC> getNPCs(String prefix){
         return getNpcs().values().stream().filter(x-> x.getCode().startsWith(prefix)).collect(Collectors.toSet());
     }
 
@@ -75,7 +75,7 @@ public class NPCPlayerManager {
         hidden.remove(world);
     }
 
-    public void destroyAll(){
+    protected void destroyAll(){
         Set<NPC> destroy = new HashSet<>();
         destroy.addAll(npcs.values());
         destroy.stream().forEach(x-> {
@@ -86,16 +86,16 @@ public class NPCPlayerManager {
         npcs.clear();
     }
 
-    public Set<NPC> getNPCs(World world){
+    protected Set<NPC> getNPCs(World world){
         Validate.notNull(world, "World must be not null");
         return npcs.values().stream().filter(x-> x.getWorld().equals(world)).collect(Collectors.toSet());
     }
 
-    public Set<NPC> getNPCs(){
+    protected Set<NPC> getNPCs(){
         return  npcs.values().stream().collect(Collectors.toSet());
     }
 
-    public NPC getNPC(String s){
+    protected NPC getNPC(String s){
         if(!npcs.containsKey(s)) return null;
         return npcs.get(s);
     }
@@ -104,11 +104,11 @@ public class NPCPlayerManager {
         return npcs;
     }
 
-    public NPCLib getNPCLib() {
+    protected NPCLib getNPCLib() {
         return npcLib;
     }
 
-    public Player getPlayer() {
+    protected Player getPlayer() {
         return player;
     }
 

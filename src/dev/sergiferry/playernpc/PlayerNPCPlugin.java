@@ -9,7 +9,6 @@ import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutEntityDestroy;
 import dev.sergiferry.spigot.SpigotPlugin;
 import dev.sergiferry.spigot.metrics.Metrics;
 import dev.sergiferry.spigot.nms.NMSUtils;
-import org.bukkit.Bukkit;
 
 import java.lang.reflect.Method;
 import java.util.HashSet;
@@ -31,7 +30,7 @@ public class PlayerNPCPlugin extends SpigotPlugin {
         NMSUtils.loadNMS(NMSCraftItemStack.class);
         NMSUtils.loadNMS(NMSCraftScoreboard.class);
         NMSUtils.loadNMS(NMSPacketPlayOutEntityDestroy.class);
-        setPrefix("§6§lPlayer NPC §8| §7");
+        setPrefix("§6§lPlayerNPC §8| §7");
         this.npcLib = new NPCLib(this);
         new NPCCommand(this);
         callPrivate("onEnable");
