@@ -1,7 +1,6 @@
 package dev.sergiferry.spigot.updater;
 import dev.sergiferry.spigot.SpigotPlugin;
 import org.bukkit.Bukkit;
-import org.bukkit.plugin.Plugin;
 
 import java.io.IOException;
 import java.io.InputStream;

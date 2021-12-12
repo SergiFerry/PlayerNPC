@@ -2,12 +2,10 @@ package dev.sergiferry.playernpc.api;
 
 import dev.sergiferry.playernpc.PlayerNPCPlugin;
 import dev.sergiferry.playernpc.api.events.NPCInteractEvent;
-import net.minecraft.world.entity.animal.axolotl.ValidatePlayDead;
 import org.apache.commons.lang.Validate;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
-import org.bukkit.craftbukkit.libs.org.apache.http.annotation.Experimental;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -295,14 +293,7 @@ public class NPCLib implements Listener {
     private Integer taskID;
 
     @EventHandler
-    private void onJoin(PlayerJoinEvent event){
-        join(event.getPlayer());
-        if(!event.getPlayer().isOp()) return;
-        if(getPlayerNPCPlugin().getLastSpigotVersion() == null) return;
-        Bukkit.getScheduler().runTaskLater(plugin, () ->{
-            event.getPlayer().sendMessage(getPlayerNPCPlugin().getPrefix() + "§7" + plugin.getDescription().getName() + " version §e" + getPlayerNPCPlugin().getLastSpigotVersion() + "§7 is available (currently running " + plugin.getDescription().getVersion() + "). Please download it at: §e" + getPlayerNPCPlugin().getSpigotResource());
-        }, 20);
-    }
+    private void onJoin(PlayerJoinEvent event){ join(event.getPlayer()); }
 
     @EventHandler
     private void onQuit(PlayerQuitEvent event){

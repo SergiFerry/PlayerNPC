@@ -24,7 +24,7 @@ public class NMSCraftPlayer{
         craftPlayerClass = NMSUtils.getCraftBukkitClass("entity.CraftPlayer");
         craftPlayerGetHandle = craftPlayerClass.getMethod("getHandle", new Class[0]);
         playerConnectionField = craftPlayerGetHandle.getReturnType().getField("b");
-        sendPacketMethod = Arrays.asList(playerConnectionField.getType().getMethods()).stream().filter(each -> each.getName().equals("sendPacket")).findFirst().get();
+        sendPacketMethod = Arrays.asList(playerConnectionField.getType().getMethods()).stream().filter(each -> each.getName().equals("a")).findFirst().get();
     }
 
     public static PlayerConnection getPlayerConnection(Player player){
@@ -38,7 +38,7 @@ public class NMSCraftPlayer{
     }
 
     public static void sendPacket(Player player, Packet packet){
-        getPlayerConnection(player).sendPacket(packet);
+        getPlayerConnection(player).a(packet);
     }
 
     public static Class<?> getCraftPlayerClass() {

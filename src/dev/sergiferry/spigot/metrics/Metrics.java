@@ -91,7 +91,7 @@ public class Metrics {
      *
      * @param chart The chart to add.
      */
-    public void addCustomChart(CustomChart chart) {
+    public void addCustomChart(SingleLineChart chart) {
         metricsBase.addCustomChart(chart);
     }
 

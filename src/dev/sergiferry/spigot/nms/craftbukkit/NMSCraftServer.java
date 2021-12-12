@@ -15,7 +15,7 @@ public class NMSCraftServer {
     private static Class<?> craftServerClass;
     private static Method craftServerGetServer;
 
-    protected static void load() throws ClassNotFoundException, NoSuchMethodException, NoSuchFieldException {
+    protected static void load() throws ClassNotFoundException, NoSuchMethodException {
         craftServerClass = NMSUtils.getCraftBukkitClass("CraftServer");
         craftServerGetServer = craftServerClass.getMethod("getServer", new Class[0]);
     }

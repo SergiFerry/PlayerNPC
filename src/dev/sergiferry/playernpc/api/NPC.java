@@ -70,6 +70,7 @@ public class NPC {
     private boolean glowing;
     private EnumChatFormat color;
     private FollowLookType followLookType;
+    private UUID tabListID;
     private boolean showOnTabList;
     private String customTabListName;
     private boolean shownOnTabList;
@@ -117,13 +118,14 @@ public class NPC {
         this.hiddenToPlayer = true;
         this.glowing = false;
         this.skin = NPCSkin.DEFAULT;
-        this.color = EnumChatFormat.p; //By default, the color is WHITE
+        this.color = EnumChatFormat.p;                                                                                  //By default, the color is WHITE
         this.followLookType = FollowLookType.NONE;
         this.slots = new HashMap<>();
+        this.tabListID = UUID.randomUUID();
         this.showOnTabList = false;
         this.shownOnTabList = false;
         this.npcPose = NPCPose.STANDING;
-        this.customTabListName = DEFAULT_TAB_NAME; //The placeholder {uuid} will be replaced by a random id.
+        this.customTabListName = DEFAULT_TAB_NAME;                                                                      //The placeholder {uuid} will be replaced by a random id.
         npcLib.getNPCPlayerManager(player).set(code, this);
         Bukkit.getScheduler().scheduleSyncDelayedTask(npcLib.getPlugin(), ()-> {
             hideDistance = npcLib.getDefaultHideDistance();
@@ -169,9 +171,9 @@ public class NPC {
         MinecraftServer server = NMSCraftServer.getMinecraftServer();
         WorldServer worldServer = NMSCraftWorld.getWorldServer(world);
         UUID uuid = UUID.randomUUID();
-        GameProfile gameProfile = new GameProfile(uuid, customTabListName.replaceAll("\\{uuid\\}", uuid.toString().split("-")[1]));
+        GameProfile gameProfile = new GameProfile(uuid, customTabListName.replaceAll("\\{uuid\\}", tabListID.toString().split("-")[1]));
         this.entityPlayer = new EntityPlayer(server, worldServer, gameProfile);
-        entityPlayer.setLocation(x, y, z, yaw, pitch);
+        entityPlayer.a(x, y, z, yaw, pitch); //setLocation
         updateSkin();
         updatePose();
         updateScoreboard();
@@ -489,10 +491,10 @@ public class NPC {
         Location npcLocation = new Location(world, x, y, z, yaw, pitch);
         Vector dirBetweenLocations = location.toVector().subtract(npcLocation.toVector());
         npcLocation.setDirection(dirBetweenLocations);
-        this.yaw = npcLocation.getYaw();
-        this.pitch = npcLocation.getPitch();
-        entityPlayer.setYRot(npcLocation.getYaw());
-        entityPlayer.setXRot(npcLocation.getPitch());
+        this.yaw = npcLocation.getYaw(); //yRot
+        this.pitch = npcLocation.getPitch(); //xRot
+        entityPlayer.o(yaw); //setYRot
+        entityPlayer.p(pitch); //setXRot
         return this;
     }
 
@@ -904,7 +906,7 @@ public class NPC {
      * @see     NPC#update()
      */
     private NPC updateSkin(){
-        GameProfile gameProfile = entityPlayer.getProfile();
+        GameProfile gameProfile = entityPlayer.fp();
         gameProfile.getProperties().get("textures").clear();
         gameProfile.getProperties().put("textures", new Property("textures", skin.getTexture(), skin.getSignature()));
         return this;
@@ -913,7 +915,7 @@ public class NPC {
 
     private NPC updatePose(){
         if(npcPose.equals(NPCPose.SLEEPING)) entityPlayer.e(new BlockPosition(x, y, z));
-        entityPlayer.setPose(npcPose.getEntityPose());
+        entityPlayer.b(npcPose.getEntityPose());
         return this;
     }
 
@@ -958,7 +960,6 @@ public class NPC {
     }
 
     private void updateEquipment(){
-        PlayerConnection connection = NMSCraftPlayer.getPlayerConnection(player);
         List<Pair<EnumItemSlot, net.minecraft.world.item.ItemStack>> equipment = new ArrayList<>();
         for(NPCSlot slot : NPCSlot.values()){
             EnumItemSlot nmsSlot = slot.getNmsEnum(EnumItemSlot.class);
@@ -970,43 +971,41 @@ public class NPC {
             Validate.notNull(craftItem, "Error at NMSCraftItemStack");
             equipment.add(new Pair(nmsSlot, craftItem));
         }
-        PacketPlayOutEntityEquipment packet = new PacketPlayOutEntityEquipment(entityPlayer.getId(), equipment);
-        connection.sendPacket(packet);
+        PacketPlayOutEntityEquipment packet = new PacketPlayOutEntityEquipment(entityPlayer.ae(), equipment);
+        NMSCraftPlayer.sendPacket(player, packet);
     }
 
     private void updatePlayerRotation(){
         PlayerConnection connection = NMSCraftPlayer.getPlayerConnection(player);
-        connection.sendPacket(new PacketPlayOutEntity.PacketPlayOutEntityLook(entityPlayer.getId(), (byte) ((yaw * 256 / 360)), (byte) ((pitch * 256 / 360)), false));
-        connection.sendPacket(new PacketPlayOutEntityHeadRotation(entityPlayer, (byte) (yaw * 256 / 360)));
+        NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntity.PacketPlayOutEntityLook(entityPlayer.ae(), (byte) ((yaw * 256 / 360)), (byte) ((pitch * 256 / 360)), false));
+        NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntityHeadRotation(entityPlayer, (byte) (yaw * 256 / 360)));
     }
 
     private void updateLocation(){
-        PlayerConnection connection = NMSCraftPlayer.getPlayerConnection(player);
-        connection.sendPacket( new PacketPlayOutEntityTeleport(entityPlayer));
+        NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntityTeleport(entityPlayer));
     }
 
     private void updateScoreboard(){
-        GameProfile gameProfile = entityPlayer.getProfile();
+        GameProfile gameProfile = entityPlayer.fp();
         Scoreboard scoreboard = null;
         try{ scoreboard = (Scoreboard) NMSCraftScoreboard.getCraftScoreBoardGetHandle().invoke(NMSCraftScoreboard.getCraftScoreBoardClass().cast(player.getScoreboard())); }catch (Exception e){}
         Validate.notNull(scoreboard, "Error at NMSCraftScoreboard");
-        ScoreboardTeam scoreboardTeam = scoreboard.getTeam(gameProfile.getName()) == null ? new ScoreboardTeam(scoreboard, gameProfile.getName()) : scoreboard.getTeam(gameProfile.getName());
-        scoreboardTeam.setNameTagVisibility(ScoreboardTeamBase.EnumNameTagVisibility.b); //EnumNameTagVisibility.NEVER
-        scoreboardTeam.setColor(color);
-        ScoreboardTeamBase.EnumTeamPush var1 = ScoreboardTeamBase.EnumTeamPush.b;
-        if(collidable) var1 = ScoreboardTeamBase.EnumTeamPush.a;
-        scoreboardTeam.setCollisionRule(var1);
-        scoreboardTeam.getPlayerNameSet().add(gameProfile.getName());
-        scoreboard.addPlayerToTeam(gameProfile.getName(), scoreboardTeam);
-        PlayerConnection connection = NMSCraftPlayer.getPlayerConnection(player);
-        connection.sendPacket(PacketPlayOutScoreboardTeam.a(scoreboardTeam, true));
-        connection.sendPacket(PacketPlayOutScoreboardTeam.a(scoreboardTeam, false));
+        ScoreboardTeam scoreboardTeam = scoreboard.f(gameProfile.getName()) == null ? new ScoreboardTeam(scoreboard, gameProfile.getName()) : scoreboard.f(gameProfile.getName());
+        scoreboardTeam.a(ScoreboardTeamBase.EnumNameTagVisibility.b); //EnumNameTagVisibility.NEVER
+        scoreboardTeam.a(color); //setColor
+        ScoreboardTeamBase.EnumTeamPush var1 = ScoreboardTeamBase.EnumTeamPush.b;                                       //EnumTeamPush.NEVER
+        if(collidable) var1 = ScoreboardTeamBase.EnumTeamPush.a;                                                        //EnumTeamPush.ALWAYS
+        scoreboardTeam.a(var1);
+        scoreboardTeam.g().add(gameProfile.getName());
+        scoreboard.a(gameProfile.getName(), scoreboardTeam);
+        NMSCraftPlayer.sendPacket(player, PacketPlayOutScoreboardTeam.a(scoreboardTeam, true));
+        NMSCraftPlayer.sendPacket(player, PacketPlayOutScoreboardTeam.a(scoreboardTeam, false));
     }
 
     private void updateMetadata(){
         try {
-            DataWatcher dataWatcher = entityPlayer.getDataWatcher();
-            entityPlayer.setGlowingTag(glowing);
+            DataWatcher dataWatcher = entityPlayer.ai();
+            entityPlayer.i(glowing);
             Map<Integer, DataWatcher.Item<?>> map = (Map<Integer, DataWatcher.Item<?>>) FieldUtils.readDeclaredField(dataWatcher, "f", true);
             DataWatcher.Item item = map.get(0);
             byte initialBitMask = (Byte) item.b();
@@ -1018,26 +1017,23 @@ public class NPC {
             item.a((byte) (initialBitMask & ~(1 << bitMaskIndex)));
             //
             byte b = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40;
-            dataWatcher.set(DataWatcherRegistry.a.a(17), b);
+            dataWatcher.b(DataWatcherRegistry.a.a(17), b);
             //
-            PacketPlayOutEntityMetadata metadataPacket = new PacketPlayOutEntityMetadata(entityPlayer.getId(), dataWatcher, true);
-            PlayerConnection connection = NMSCraftPlayer.getPlayerConnection(player);
-            connection.sendPacket(metadataPacket);
+            PacketPlayOutEntityMetadata metadataPacket = new PacketPlayOutEntityMetadata(entityPlayer.ae(), dataWatcher, true);
+            NMSCraftPlayer.sendPacket(player, metadataPacket);
         } catch (IllegalAccessException e) {
             e.printStackTrace();
         }
     }
 
     private void createPacket(){
-        PlayerConnection connection = NMSCraftPlayer.getPlayerConnection(player);
-        connection.sendPacket(new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.a, entityPlayer)); //EnumPlayerInfoAction.ADD_PLAYER
-        connection.sendPacket(new PacketPlayOutNamedEntitySpawn(entityPlayer));
+        NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.a, entityPlayer)); //EnumPlayerInfoAction.ADD_PLAYER
+        NMSCraftPlayer.sendPacket(player, new PacketPlayOutNamedEntitySpawn(entityPlayer));
         shownOnTabList = true;
         updatePlayerRotation();
         if(showOnTabList) return;
         Bukkit.getScheduler().scheduleSyncDelayedTask(getNpcLib().getPlugin(), ()-> {
-            Packet packet2 = new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.e, entityPlayer); //EnumPlayerInfoAction.REMOVE_PLAYER
-            connection.sendPacket(packet2);
+            NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.e, entityPlayer)); //EnumPlayerInfoAction.REMOVE_PLAYER
             shownOnTabList = false;
         }, 10);
     }
@@ -1055,12 +1051,10 @@ public class NPC {
     private void hideToPlayer(){
         if(hiddenToPlayer) return;
         if(shownOnTabList){
-            Packet packet2 = new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.e, entityPlayer); //EnumPlayerInfoAction.REMOVE_PLAYER
-            NMSCraftPlayer.sendPacket(player, packet2);
+            NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.e, entityPlayer)); //EnumPlayerInfoAction.REMOVE_PLAYER
             shownOnTabList = false;
         }
-        PlayerConnection connection = NMSCraftPlayer.getPlayerConnection(player);
-        connection.sendPacket(NMSPacketPlayOutEntityDestroy.createPacket(entityPlayer.getId()));
+        NMSCraftPlayer.sendPacket(player, NMSPacketPlayOutEntityDestroy.createPacket(entityPlayer.ae()));
         if(npcHologram != null) npcHologram.hide();
         hiddenToPlayer = true;
     }
@@ -1221,11 +1215,11 @@ public class NPC {
     }
 
     private String getReplacedCustomName(){
-        return getReplacedCustomName(customTabListName, entityPlayer.getProfile().getId());
+        return getReplacedCustomName(customTabListName, tabListID);
     }
 
     private String getReplacedCustomName(String name){
-        return getReplacedCustomName(name, entityPlayer.getProfile().getId());
+        return getReplacedCustomName(name, tabListID);
     }
 
     private String getReplacedCustomName(String name, UUID uuid){

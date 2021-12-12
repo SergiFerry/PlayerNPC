@@ -35,9 +35,9 @@ public class SkinFetcher {
         }
     }
 
-    private static String[] getSkin(Player player){
+    public static String[] getSkin(Player player){
         EntityPlayer p = NMSCraftPlayer.getEntityPlayer(player);
-        GameProfile profile = p.getProfile();
+        GameProfile profile = p.fp();
         Property property = profile.getProperties().get("textures").iterator().next();
         String texture = property.getValue();
         String signature = property.getSignature();

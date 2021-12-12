@@ -2,8 +2,6 @@ package dev.sergiferry.spigot.commands;
 
 import dev.sergiferry.spigot.SpigotPlugin;
 import org.bukkit.command.*;
-import org.bukkit.plugin.Plugin;
-import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.ArrayList;
 import java.util.List;

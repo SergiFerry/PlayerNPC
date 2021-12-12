@@ -4,7 +4,6 @@ import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutEntityDestroy;
 import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
 import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftWorld;
 import net.minecraft.network.chat.ChatMessage;
-import net.minecraft.network.protocol.game.PacketPlayOutEntityDestroy;
 import net.minecraft.network.protocol.game.PacketPlayOutEntityMetadata;
 import net.minecraft.network.protocol.game.PacketPlayOutSpawnEntityLiving;
 import net.minecraft.server.level.WorldServer;
@@ -47,16 +46,16 @@ public class NPCHologram {
     protected void setLine(int line, String text) {
         if(!lines.containsKey(line)) return;
         EntityArmorStand as = lines.get(line);
-        as.setNoGravity(true);
-        as.setInvisible(true);
-        as.setCustomName(new ChatMessage(text));
-        as.setCustomNameVisible(true);
-        if (text == "") as.setCustomNameVisible(false);
+        as.e(true); //setNoGravity
+        as.j(true); //setInvisible
+        as.a(new ChatMessage(text)); //setCustomName
+        as.n(true); //setCustomNameVisible
+        if (text == "") as.n(false);
     }
 
     protected String getLine(int line) {
         if(!lines.containsKey(line)) return "";
-        return lines.get(line).getCustomName().getString();
+        return lines.get(line).Z().getString();
     }
 
     protected boolean hasLine(int line){
@@ -74,11 +73,11 @@ public class NPCHologram {
         try{ world = (WorldServer) NMSCraftWorld.getCraftWorldGetHandle().invoke(NMSCraftWorld.getCraftWorldClass().cast(location.getWorld()), new Object[0]);}catch (Exception e){}
         Validate.notNull(world, "Error at NMSCraftWorld");
         EntityArmorStand armor = new EntityArmorStand(world, location.getX(), location.getY() - 0.27 * line, location.getZ());
-        armor.setCustomNameVisible(true);
-        armor.setNoGravity(true);
-        armor.setCustomName(new ChatMessage("§f"));
-        armor.setInvisible(true);
-        armor.setMarker(true);
+        armor.n(true); //setCustomNameVisible
+        armor.e(true); //setNoGravity
+        armor.a(new ChatMessage("§f")); //setCustomName
+        armor.j(true); //setInvisible
+        armor.t(true); //setMarker
         lines.put(line, armor);
     }
 
@@ -89,17 +88,16 @@ public class NPCHologram {
         PlayerConnection connection = NMSCraftPlayer.getPlayerConnection(getPlayer());
         for(Integer line : lines.keySet()){
             EntityArmorStand armor = lines.get(line);
-            connection.sendPacket(new PacketPlayOutSpawnEntityLiving(armor));
-            connection.sendPacket(new PacketPlayOutEntityMetadata(armor.getId(), armor.getDataWatcher(), true));
+            NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutSpawnEntityLiving(armor));
+            NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutEntityMetadata(armor.ae(), armor.ai(), true));
         }
         canSee = true;
     }
 
     protected void hide(){
         if(!canSee) return;
-        PlayerConnection playerConnection = NMSCraftPlayer.getPlayerConnection(getPlayer());
         for (Integer in : lines.keySet()) {
-            playerConnection.sendPacket(NMSPacketPlayOutEntityDestroy.createPacket(lines.get(in).getId()));
+            NMSCraftPlayer.sendPacket(getPlayer(), NMSPacketPlayOutEntityDestroy.createPacket(lines.get(in).ae()));
         }
         canSee = false;
     }

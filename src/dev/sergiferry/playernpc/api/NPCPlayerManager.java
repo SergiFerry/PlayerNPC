@@ -39,7 +39,7 @@ public class NPCPlayerManager {
     }
 
     protected NPC getNPC(Integer entityID){
-        return npcs.values().stream().filter(x-> x.isCreated() && x.getEntityPlayer().getId() == entityID).findAny().orElse(null);
+        return npcs.values().stream().filter(x-> x.isCreated() && x.getEntityPlayer().ae() == entityID).findAny().orElse(null);
     }
 
     protected void removeNPC(String code){

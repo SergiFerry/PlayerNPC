@@ -9,6 +9,7 @@ import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutEntityDestroy;
 import dev.sergiferry.spigot.SpigotPlugin;
 import dev.sergiferry.spigot.metrics.Metrics;
 import dev.sergiferry.spigot.nms.NMSUtils;
+import dev.sergiferry.spigot.server.ServerVersion;
 
 import java.lang.reflect.Method;
 import java.util.HashSet;
@@ -21,7 +22,8 @@ public class PlayerNPCPlugin extends SpigotPlugin {
     private NPCLib npcLib;
 
     public PlayerNPCPlugin() {
-        super(93625);
+        //Last 1.17 supported version 2021.4
+        super(93625, ServerVersion.VERSION_1_18, ServerVersion.VERSION_1_18_1);
         instance = this;
     }
 

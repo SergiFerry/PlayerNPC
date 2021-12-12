@@ -2,6 +2,7 @@ package dev.sergiferry.spigot;
 
 import dev.sergiferry.spigot.metrics.Metrics;
 import dev.sergiferry.spigot.nms.NMSUtils;
+import dev.sergiferry.spigot.server.ServerVersion;
 import dev.sergiferry.spigot.updater.UpdateChecker;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -10,16 +11,26 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public abstract class SpigotPlugin extends JavaPlugin implements Listener {
+
+    private static String prefix;
 
     private int spigotResourceID;
     private int bStatsResourceID;
     private String lastSpigotVersion;
     private Metrics metrics;
-    private static String prefix;
+    private List<ServerVersion> supportedVersions;
+    private ServerVersion serverVersion;
 
-    public SpigotPlugin(int spigotResourceID){
+    public SpigotPlugin(int spigotResourceID, ServerVersion... serverVersion){
         this.spigotResourceID = spigotResourceID;
+        this.supportedVersions = new ArrayList<>();
+        supportedVersions.addAll(List.of(serverVersion));
+        this.serverVersion = ServerVersion.getVersion(Bukkit.getBukkitVersion());
+        System.out.println("Bukkit version: " + Bukkit.getBukkitVersion());
     }
 
     public abstract void enable();
@@ -28,6 +39,25 @@ public abstract class SpigotPlugin extends JavaPlugin implements Listener {
 
     @Override
     public void onEnable(){
+        boolean unsafeByPass = false;
+        if(!supportedVersions.contains(serverVersion)){
+            String vs = "";
+            for(ServerVersion serverVersion : supportedVersions){
+                vs = vs + ", " + serverVersion.getMinecraftVersion();
+                if(serverVersion.getMinecraftVersion().equals(Bukkit.getBukkitVersion().split("-")[0])) unsafeByPass = true;
+            }
+            if(!unsafeByPass){
+                vs = vs.replaceFirst(", ", "");
+                Bukkit.getConsoleSender().sendMessage("§cThis bukkit version (" + Bukkit.getBukkitVersion() + ") is not supported by this plugin (" + getDescription().getName() + " v" + getDescription().getVersion() + ")");
+                Bukkit.getConsoleSender().sendMessage("§7Supported bukkit versions: " + vs);
+                getServer().getPluginManager().disablePlugin(this);
+                return;
+            }
+        }
+        if(unsafeByPass){
+            Bukkit.getConsoleSender().sendMessage("§eThis bukkit compilation (" + Bukkit.getBukkitVersion() + ") is not supported, but the Minecraft Server version (" + Bukkit.getBukkitVersion().split("-")[0] + ") is supported in another compilation.");
+            Bukkit.getConsoleSender().sendMessage("§eEnabling " + getDescription().getName() + " v" + getDescription().getVersion() + " anyways, errors may appear.");
+        }
         try{
             NMSUtils.load();
             enable();
@@ -42,7 +72,7 @@ public abstract class SpigotPlugin extends JavaPlugin implements Listener {
             Bukkit.getConsoleSender().sendMessage(getPrefix() + "Plugin created by §6SergiFerry");
         }
         catch (Exception e){
-            Bukkit.getConsoleSender().sendMessage(getPrefix() + "§cThere was an error enabling the plugin");
+            Bukkit.getConsoleSender().sendMessage("§cThere was an error enabling the plugin " + getDescription().getName() + " v" + getDescription().getVersion());
             e.printStackTrace();
             getServer().getPluginManager().disablePlugin(this);
         }
@@ -100,6 +130,15 @@ public abstract class SpigotPlugin extends JavaPlugin implements Listener {
     public String getLastSpigotVersion() {
         return lastSpigotVersion;
     }
+
+    public ServerVersion getServerVersion() {
+        return serverVersion;
+    }
+
+    public List<ServerVersion> getSupportedVersions() {
+        return supportedVersions;
+    }
+
 
     public int getSpigotResourceID() {
         return spigotResourceID;

@@ -17,14 +17,13 @@ public class NMSUtils {
 
     public static void load() {
         version = Bukkit.getServer().getClass().getPackage().getName().replace(".", ",").split(",")[3];
-        try {
-            //Minecraft Server
-            //CraftBukkit
+        try{
             loadNMS(NMSCraftPlayer.class);
             loadNMS(NMSCraftWorld.class);
             loadNMS(NMSCraftServer.class);
-        } catch (Exception e) {
-            e.printStackTrace();
+        }
+        catch (Exception e){
+            throw new IllegalStateException("This NMS version (" + version + ") is not supported.");
         }
     }
 
@@ -52,8 +51,8 @@ public class NMSUtils {
             method.invoke(null, new Object[0]);
         }
         catch (Exception e){
-            Bukkit.getConsoleSender().sendMessage("§b§lNMS §8| §cError loading " + c.getSimpleName() );
             e.printStackTrace();
+            throw new IllegalStateException("Error loading NMS " + c.getName());
         }
     }
 

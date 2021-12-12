@@ -24,6 +24,14 @@ public class NPCSkin {
         setPlayerName(playerName);
     }
 
+    public NPCSkin(String[] data){
+        this(data[0], data[1]);
+    }
+
+    public NPCSkin(String[] data, String playerName){
+        this(data[0], data[1], playerName);
+    }
+
     public NPCSkin setPlayerName(String playerName){
         this.playerName = playerName;
         return this;
@@ -40,6 +48,8 @@ public class NPCSkin {
     public String getPlayerName() {
         return playerName;
     }
+
+    public String[] getData() { return new String[]{texture, signature}; }
 
     public static NPCSkin getDefaultSkin(){
         return DEFAULT;
