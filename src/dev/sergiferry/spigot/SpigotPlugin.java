@@ -61,6 +61,7 @@ public abstract class SpigotPlugin extends JavaPlugin implements Listener {
         try{
             NMSUtils.load();
             enable();
+            getServer().getPluginManager().registerEvents(this, this);
             new UpdateChecker(this).getLatestVersion(version -> {
                 if(this.getDescription().getVersion().equalsIgnoreCase(version)) return;
                 Integer higher = isHigherVersion(getDescription().getVersion(), version);
@@ -85,7 +86,7 @@ public abstract class SpigotPlugin extends JavaPlugin implements Listener {
     }
 
     @EventHandler
-    private void onJoin(PlayerJoinEvent event){
+    public void onJoin(PlayerJoinEvent event){
         if(!event.getPlayer().isOp()) return;
         if(getLastSpigotVersion() == null) return;
         Bukkit.getScheduler().runTaskLater(this, () ->{

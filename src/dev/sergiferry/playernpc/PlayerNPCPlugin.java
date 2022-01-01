@@ -11,6 +11,7 @@ import dev.sergiferry.spigot.metrics.Metrics;
 import dev.sergiferry.spigot.nms.NMSUtils;
 import dev.sergiferry.spigot.server.ServerVersion;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.HashSet;
 import java.util.Set;
@@ -22,7 +23,7 @@ public class PlayerNPCPlugin extends SpigotPlugin {
     private NPCLib npcLib;
 
     public PlayerNPCPlugin() {
-        //Last 1.17 supported version 2021.4
+        //Last 1.17-1.17.1 supported version 2021.4
         super(93625, ServerVersion.VERSION_1_18, ServerVersion.VERSION_1_18_1);
         instance = this;
     }
@@ -33,7 +34,12 @@ public class PlayerNPCPlugin extends SpigotPlugin {
         NMSUtils.loadNMS(NMSCraftScoreboard.class);
         NMSUtils.loadNMS(NMSPacketPlayOutEntityDestroy.class);
         setPrefix("§6§lPlayerNPC §8| §7");
-        this.npcLib = new NPCLib(this);
+        try{
+            Constructor<NPCLib> constructor = NPCLib.class.getDeclaredConstructor(PlayerNPCPlugin.class);
+            constructor.setAccessible(true);
+            this.npcLib = constructor.newInstance(this);
+            constructor.setAccessible(false);
+        }catch (Exception e){ e.printStackTrace(); }
         new NPCCommand(this);
         callPrivate("onEnable");
         setupMetrics(11918);
@@ -54,6 +60,7 @@ public class PlayerNPCPlugin extends SpigotPlugin {
             Method method = NPCLib.class.getDeclaredMethod(m, PlayerNPCPlugin.class);
             method.setAccessible(true);
             method.invoke(npcLib, this);
+            method.setAccessible(false);
         }
         catch (Exception e){}
     }

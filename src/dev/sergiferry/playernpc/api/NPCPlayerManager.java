@@ -1,12 +1,13 @@
 package dev.sergiferry.playernpc.api;
 
-import dev.sergiferry.playernpc.api.events.NPCInteractEvent;
 import org.apache.commons.lang.Validate;
-import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -19,16 +20,12 @@ public class NPCPlayerManager {
     private final HashMap<String, NPC> npcs;
     private final PacketReader packetReader;
     protected final Map<World, Set<NPC>> hidden;
-    private Long lastClickTime;
-    private NPCInteractEvent.ClickType lastClick;
     private final Long lastEnter;
 
     protected NPCPlayerManager(NPCLib npcLib, Player player) {
         this.npcLib = npcLib;
         this.player = player;
         this.npcs = new HashMap<>();
-        this.lastClickTime = System.currentTimeMillis();
-        this.lastClick = NPCInteractEvent.ClickType.LEFT_CLICK;
         this.packetReader = new PacketReader(this);
         this.hidden = new HashMap<>();
         this.lastEnter = System.currentTimeMillis();
@@ -116,21 +113,8 @@ public class NPCPlayerManager {
         return packetReader;
     }
 
-    protected NPCInteractEvent.ClickType getLastClick() {
-        if(System.currentTimeMillis() - lastClickTime > 200){
-            if(player.getEquipment().getItemInMainHand() != null && !player.getEquipment().getItemInMainHand().getType().equals(Material.AIR)) lastClick = NPCInteractEvent.ClickType.LEFT_CLICK;
-            else if(player.getEquipment().getItemInOffHand() != null && !player.getEquipment().getItemInOffHand().getType().equals(Material.AIR)) lastClick = NPCInteractEvent.ClickType.LEFT_CLICK;
-            else lastClick = NPCInteractEvent.ClickType.RIGHT_CLICK;
-        }
-        return lastClick;
-    }
-
     protected Long getLastEnter() {
         return lastEnter;
     }
 
-    protected void setLastClick(NPCInteractEvent.ClickType lastClick) {
-        this.lastClick = lastClick;
-        this.lastClickTime = System.currentTimeMillis();
-    }
 }

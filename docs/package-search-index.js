@@ -1,1 +1,1 @@
-packageSearchIndex = [{"l":"All Packages","u":"allpackages-index.html"},{"l":"dev.sergiferry.playernpc.api"},{"l":"dev.sergiferry.playernpc.api.events"}];updateSearchResults();
+packageSearchIndex = [{"l":"All Packages","u":"allpackages-index.html"},{"l":"dev.sergiferry.playernpc.api"},{"l":"dev.sergiferry.playernpc.api.events"},{"l":"dev.sergiferry.playernpc.utils"}];updateSearchResults();

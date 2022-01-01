@@ -2,9 +2,9 @@ package dev.sergiferry.playernpc.command;
 
 import dev.sergiferry.playernpc.PlayerNPCPlugin;
 import dev.sergiferry.playernpc.api.NPC;
+import dev.sergiferry.playernpc.api.NPCAttributes;
 import dev.sergiferry.playernpc.api.NPCLib;
 import dev.sergiferry.playernpc.api.NPCSkin;
-import dev.sergiferry.playernpc.api.NPCSlot;
 import dev.sergiferry.spigot.SpigotPlugin;
 import dev.sergiferry.spigot.commands.CommandInstance;
 import dev.sergiferry.playernpc.utils.ClickableText;
@@ -25,6 +25,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.util.Vector;
 
 import java.util.*;
 
@@ -39,51 +40,48 @@ public class NPCCommand extends CommandInstance {
     }
 
     @Override
-    public void onExecute(CommandSender send, Command command, String label, String[] args) {
-        if(!(send instanceof Player)){
-            send.sendMessage(getPrefix() + "You must be a player to do this.");
-            return;
-        }
-        Player sender = ((Player) send).getPlayer();
+    public void onExecute(CommandSender sender, Command command, String label, String[] args) {
+        final Player playerSender = (sender instanceof Player) ? (Player) sender : null;
         if(!sender.isOp()){
             sender.sendMessage(getPrefix() + "You don't have permission to do this.");
             return;
         }
         NPCLib npcLib = NPCLib.getInstance();
         if(args.length == 0){
-            sendHelpList(sender, 1);
+            if(playerSender != null) sendHelpList(playerSender, 1);
+            else error(sender);
             return;
         }
         if(args.length < 3){
             if(args[0].equals("help")){
                 int asd = 1;
                 if(args.length == 2 && MathUtils.isInteger(args[1])) asd = Integer.valueOf(args[1]);
-                sendHelpList(sender, asd);
+                if(playerSender != null) sendHelpList(playerSender, asd);
+                else error(sender);
                 return;
             }
-
             NPCCommands commands = NPCCommands.getCommand(args[0]);
             if(commands != null) new ClickableText("§c§lError §8| §7Use §e" + commands.getCommand(), "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, commands.getCommand()).send(sender);
             else error(sender, "Incorrect command. Use §e/npc help");
             return;
         }
-        Player player = getPlugin().getServer().getPlayerExact(args[1]);
-        if(player == null || !player.isOnline()){
+        Player playerTarget = getPlugin().getServer().getPlayerExact(args[1]);
+        if(playerTarget == null || !playerTarget.isOnline()){
             error(sender, "This player is not online.");
             return;
         }
         String id = args[2];
         if(args[0].equals(NPCCommands.GENERATE.getArgument())){
-            if(npcLib.hasNPC(player, id)){
-                error(sender, "The NPC with id §a" + id + "§7 for the player §b" + player.getName() + "§7 is already generated.");
+            if(npcLib.hasNPC(playerTarget, id)){
+                error(sender, "The NPC with id §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 is already generated.");
                 return;
             }
-            NPC npc = npcLib.generateNPC(player, id, sender.getLocation());
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been generated.");
-            sendNPCProgress(sender, npc);
+            NPC npc = npcLib.generateNPC(playerTarget, id, playerSender != null ? playerSender.getLocation() : new Location(playerTarget.getWorld(), 0, 0, 0));
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been generated.");
+            if(playerSender != null) sendNPCProgress(playerSender, npc);
             return;
         }
-        NPC npc =  npcLib.getNPC(player, id);
+        NPC npc =  npcLib.getNPC(playerTarget, id);
         if(npc == null){
             new ClickableText("§c§lError §8| §7This NPC doesn't exist. To generate the NPC use §e" + NPCCommands.GENERATE.getCommand(), "§eClick to write the command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.GENERATE.getCommand()).send(sender);
             return;
@@ -98,7 +96,7 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.create();
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been created.");
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been created.");
             new ClickableText("§7To show the NPC to the player use §e" + NPCCommands.SHOW.getCommand(npc), "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.SHOW.getCommand(npc)).send(sender);
             return;
         }
@@ -112,7 +110,7 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.show();
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been shown.");
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been shown.");
         }
         else if(args[0].equals(NPCCommands.HIDE.getArgument())){
             if(!npc.isCreated()){
@@ -124,7 +122,7 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.hide();
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been hidden.");
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been hidden.");
         }
         else if(args[0].equals(NPCCommands.UPDATE.getArgument())){
             if(!npc.isCreated()){
@@ -132,7 +130,7 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.update();
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been updated.");
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been updated.");
         }
         else if(args[0].equals(NPCCommands.FORCEUPDATE.getArgument())){
             if(!npc.isCreated()){
@@ -140,7 +138,7 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.forceUpdate();
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been force updated.");
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been force updated.");
         }
         else if(args[0].equals(NPCCommands.UPDATETEXT.getArgument())){
             if(!npc.isCreated()){
@@ -148,7 +146,7 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.updateText();
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been updated text.");
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been updated text.");
         }
         if(args[0].equals(NPCCommands.FORCEUPDATETEXT.getArgument())){
             if(!npc.isCreated()){
@@ -156,7 +154,7 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.forceUpdateText();
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been force updated text.");
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been force updated text.");
         }
         else if(args[0].equals(NPCCommands.DESTROY.getArgument())){
             if(!npc.isCreated()){
@@ -164,35 +162,54 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.destroy();
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been destroyed.");
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been destroyed.");
         }
         else if(args[0].equals(NPCCommands.REMOVE.getArgument())){
-            if(!npc.isCreated()){
-                errorCreated(sender, npc);
-                return;
-            }
-            npcLib.removeNPC(player, npc);
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been removed.");
+            npcLib.removeNPC(playerTarget, npc);
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been removed.");
         }
         else if(args[0].equals(NPCCommands.TELEPORT.getArgument())){
             if(!npc.isCreated()){
                 errorCreated(sender, npc);
                 return;
             }
-            if(!npc.getWorld().equals(player.getWorld())){
-                error(sender, "The NPC is in another world.");
+            if(args.length < 4){
+                error(sender, "Use " + NPCCommands.TELEPORT.getCommand(npc));
                 return;
             }
-            npc.teleport(player.getLocation());
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been teleported.");
+            Location look = null;
+            if(MathUtils.isInteger(args[3])){
+                if(args.length < 6 || !MathUtils.isInteger(args[4]) || !MathUtils.isInteger(args[5])){
+                    error(sender, "Use " + NPCCommands.TELEPORT.getCommand(npc));
+                    return;
+                }
+                Integer x = Integer.valueOf(args[3]);
+                Integer y = Integer.valueOf(args[4]);
+                Integer z = Integer.valueOf(args[5]);
+                look = new Location(npc.getWorld(), x, y, z);
+            }
+            else {
+                Player lookPlayer = Bukkit.getPlayerExact(args[3]);
+                if (lookPlayer == null || !lookPlayer.isOnline()) {
+                    error(sender, "That player is not online.");
+                    return;
+                }
+                if(!lookPlayer.getWorld().getName().equals(npc.getWorld().getName())){
+                    error(sender, "That player is not in the same world as NPC.");
+                    return;
+                }
+                look = lookPlayer.getLocation();
+            }
+            if(look == null){
+                error(sender, "We can't find that location.");
+                return;
+            }
+            npc.teleport(look);
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been teleported.");
         }
         else if(args[0].equals(NPCCommands.LOOKAT.getArgument())){
             if(!npc.isCreated()){
                 errorCreated(sender, npc);
-                return;
-            }
-            if(!npc.getWorld().equals(player.getWorld())){
-                error(sender, "The NPC is in another world.");
                 return;
             }
             if(args.length < 4){
@@ -212,7 +229,7 @@ public class NPCCommand extends CommandInstance {
             }
             else {
                 Player lookPlayer = Bukkit.getPlayerExact(args[3]);
-                if (lookPlayer == null) {
+                if (lookPlayer == null || !lookPlayer.isOnline()) {
                     error(sender, "That player is not online.");
                     return;
                 }
@@ -227,7 +244,7 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.lookAt(look);
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set look at.");
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set look at.");
             new ClickableText("§7You need to do §e" + NPCCommands.UPDATE.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.UPDATE.getCommand(npc)).send(sender);
             return;
         }
@@ -242,7 +259,7 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.setGlowing(bo);
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set glowing as §e" + bo.toString().toLowerCase());
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set glowing as §e" + bo.toString().toLowerCase());
             if(npc.isCreated()){
                 new ClickableText("§7You need to do §e" + NPCCommands.UPDATE.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.UPDATE.getCommand(npc)).send(sender);
             }
@@ -254,13 +271,17 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             try{
-                NPC.NPCPose npcPose = NPC.NPCPose.valueOf(args[3].toUpperCase());
+                NPC.Pose npcPose = NPC.Pose.valueOf(args[3].toUpperCase());
                 if(npc.getPose() == npcPose){
                     error(sender, "The pose was §e" + npcPose.name().toLowerCase() + "§7 yet");
                     return;
                 }
+                if(npcPose.isDeprecated()){
+                    error(sender, "This pose is deprecated, only for developers.");
+                    return;
+                }
                 npc.setPose(npcPose);
-                sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set pose as §e" + npcPose.name().toLowerCase());
+                sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set pose as §e" + npcPose.name().toLowerCase());
                 if(npc.isCreated()){
                     new ClickableText("§7You need to do §e" + NPCCommands.UPDATE.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.UPDATE.getCommand(npc)).send(sender);
                 }
@@ -280,12 +301,12 @@ public class NPCCommand extends CommandInstance {
                     String[] skin = SkinFetcher.getSkin(args[3]);
                     if(skin != null){
                         npc.setSkin(new NPCSkin(skin[0], skin[1], args[3]));
-                        sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set skin to " + args[3]);
+                        sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set skin to " + args[3]);
                         if(npc.isCreated()){
                             new ClickableText("§7You need to do §e" + NPCCommands.FORCEUPDATE.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.FORCEUPDATE.getCommand(npc)).send(sender);
                             return;
                         }
-                        sendNPCProgress(sender, npc);
+                        if(playerSender != null) sendNPCProgress(playerSender, npc);
                     }
                     else{
                         error(sender, "Incorrect player name.");
@@ -308,13 +329,13 @@ public class NPCCommand extends CommandInstance {
             }
             int as = npc.getText().size();
             npc.setText(list);
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set Text to §e" + list.size() + "§7 lines.");
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set Text to §e" + list.size() + "§7 lines.");
             if(npc.isCreated()){
                 boolean same = as == npc.getText().size();
                 new ClickableText("§7You need to do §e" + (same ? NPCCommands.UPDATETEXT.getCommand(npc) : NPCCommands.FORCEUPDATETEXT.getCommand(npc)) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, (same ? NPCCommands.UPDATETEXT.getCommand(npc) : NPCCommands.FORCEUPDATETEXT.getCommand(npc))).send(sender);
                 return;
             }
-            sendNPCProgress(sender, npc);
+            if(playerSender != null) sendNPCProgress(playerSender, npc);
         }
         else if(args[0].equals(NPCCommands.SETCUSTOMTABLISTNAME.getArgument())){
             if(args.length < 4){
@@ -325,19 +346,19 @@ public class NPCCommand extends CommandInstance {
                 npc.setCustomTabListName(args[3].replaceAll("_", " ").replaceAll("&", "§"));
             }
             catch (Exception e){
-                player.sendMessage(getPrefix() + "§cThis name is not valid. Remember that cannot be larger than 16 characters, and it can't be 2 NPCs with the same custom tab list name.");
+                playerTarget.sendMessage(getPrefix() + "§cThis name is not valid. Remember that cannot be larger than 16 characters, and it can't be 2 NPCs with the same custom tab list name.");
                 return;
             }
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set custom tab list name to §e" + npc.getCustomTabListName());
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set custom tab list name to §e" + npc.getCustomTabListName());
             if(!npc.isShowOnTabList()){
-                new ClickableText("§7You need to do §e" + NPCCommands.SETSHOWONTABLIST.getCommand(npc, "true") + " §7to show the custom tab list name on the tab list.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.SETSHOWONTABLIST.getCommand(npc, "true")).send(player);
+                new ClickableText("§7You need to do §e" + NPCCommands.SETSHOWONTABLIST.getCommand(npc, "true") + " §7to show the custom tab list name on the tab list.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.SETSHOWONTABLIST.getCommand(npc, "true")).send(playerTarget);
             }
             else{
                 if(npc.isCreated()){
                     new ClickableText("§7You need to do §e" + NPCCommands.FORCEUPDATE.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.FORCEUPDATE.getCommand(npc)).send(sender);
                     return;
                 }
-                sendNPCProgress(sender, npc);
+                if(playerSender != null) sendNPCProgress(playerSender, npc);
             }
         }
         else if(args[0].equals(NPCCommands.SETCOLLIDABLE.getArgument())){
@@ -351,12 +372,12 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.setCollidable(bo);
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set collidable as §e" + bo);
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set collidable as §e" + bo);
             if(npc.isCreated()){
                 new ClickableText("§7You need to do §e" + NPCCommands.FORCEUPDATE.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.FORCEUPDATE.getCommand(npc)).send(sender);
                 return;
             }
-            sendNPCProgress(sender, npc);
+            if(playerSender != null) sendNPCProgress(playerSender, npc);
         }
         else if(args[0].equals(NPCCommands.SETGLOWCOLOR.getArgument())){
             if(args.length < 4){
@@ -370,12 +391,12 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.setGlowingColor(color);
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set glow color as §f" + color + color.name().toLowerCase());
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set glow color as §f" + color + color.name().toLowerCase());
             if(npc.isCreated()){
                 new ClickableText("§7You need to do §e" + NPCCommands.FORCEUPDATE.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.FORCEUPDATE.getCommand(npc)).send(sender);
                 return;
             }
-            sendNPCProgress(sender, npc);
+            if(playerSender != null) sendNPCProgress(playerSender, npc);
         }
         else if(args[0].equals(NPCCommands.SETFOLLOWLOOKTYPE.getArgument())){
             if(args.length < 4){
@@ -389,8 +410,49 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.setFollowLookType(followLookType);
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set follow look type as §e" + followLookType.name().toLowerCase());
-            sendNPCProgress(sender, npc);
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set follow look type as §e" + followLookType.name().toLowerCase());
+            if(playerSender != null) sendNPCProgress(playerSender, npc);
+        }
+        else if(args[0].equals(NPCCommands.SETTEXTOPACITY.getArgument())){
+            if(args.length < 4){
+                error(sender, "Use " + NPCCommands.SETTEXTOPACITY.getCommand(npc));
+                return;
+            }
+            NPC.TextOpacity textOpacity = null;
+            try{textOpacity = NPC.TextOpacity.valueOf(args[3].toUpperCase());}catch (Exception e){}
+            if(textOpacity == null){
+                error(sender, "This text opacity type is not valid.");
+                return;
+            }
+            npc.setTextOpacity(textOpacity);
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set text opacity as §e" + textOpacity.name().toLowerCase());
+            if(npc.isCreated()) new ClickableText("§7You need to do §e" + NPCCommands.FORCEUPDATETEXT.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.FORCEUPDATETEXT.getCommand(npc)).send(sender);
+        }
+        else if(args[0].equals(NPCCommands.SETLINEOPACITY.getArgument())){
+            if(args.length < 5){
+                error(sender, "Use " + NPCCommands.SETLINEOPACITY.getCommand(npc));
+                return;
+            }
+            if(!MathUtils.isInteger(args[3])){
+                error(sender, "This line is not valid.");
+                return;
+            }
+            Integer line = Integer.parseInt(args[3]);
+            if(args[4].equalsIgnoreCase("reset")){
+                npc.resetLineOpacity(line);
+                sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been reset line opacity for the line §e" + line);
+                if(npc.isCreated()) new ClickableText("§7You need to do §e" + NPCCommands.FORCEUPDATETEXT.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.FORCEUPDATETEXT.getCommand(npc)).send(sender);
+                return;
+            }
+            NPC.TextOpacity textOpacity = null;
+            try{textOpacity = NPC.TextOpacity.valueOf(args[4].toUpperCase());}catch (Exception e){}
+            if(textOpacity == null){
+                error(sender, "This text opacity type is not valid.");
+                return;
+            }
+            npc.setLineOpacity(line, textOpacity);
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set line opacity as §e" + textOpacity.name().toLowerCase() + " §7for the line §e" + line);
+            if(npc.isCreated()) new ClickableText("§7You need to do §e" + NPCCommands.FORCEUPDATETEXT.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.FORCEUPDATETEXT.getCommand(npc)).send(sender);
         }
         else if(args[0].equals(NPCCommands.SETSHOWONTABLIST.getArgument())){
             if(args.length < 4){
@@ -403,12 +465,53 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.setShowOnTabList(bo);
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set show on tab list as §e" + bo.toString().toLowerCase());
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set show on tab list as §e" + bo.toString().toLowerCase());
             if(npc.isCreated()){
                 new ClickableText("§7You need to do §e" + NPCCommands.FORCEUPDATE.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.FORCEUPDATE.getCommand(npc)).send(sender);
                 return;
             }
-            sendNPCProgress(player, npc);
+            sendNPCProgress(playerTarget, npc);
+        }
+        else if(args[0].equals(NPCCommands.SETTEXTALIGNMENT.getArgument())){
+            if(args.length < 4){
+                error(sender, "Use " + NPCCommands.SETTEXTALIGNMENT.getCommand(npc));
+                return;
+            }
+            Vector look = null;
+            if(MathUtils.isDouble(args[3])){
+                if(args.length < 6 || !MathUtils.isDouble(args[4]) || !MathUtils.isDouble(args[5])){
+                    error(sender, "Use " + NPCCommands.SETTEXTALIGNMENT.getCommand(npc));
+                    return;
+                }
+                Double x = Double.valueOf(args[3]);
+                Double y = Double.valueOf(args[4]);
+                Double z = Double.valueOf(args[5]);
+                look = new Vector(x, y, z);
+            }
+            else if(args[3].equalsIgnoreCase("reset")) look = NPCAttributes.getDefaultTextAlignment();
+            if(look == null){
+                error(sender, "This value is not valid.");
+                return;
+            }
+            npc.setTextAlignment(look);
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set text alignment as (§e" + look.getX() + "§7, §e" + look.getY() + "§7, §e" + look.getZ() + "§7)");
+            if(npc.isCreated()) new ClickableText("§7You need to do §e" + NPCCommands.FORCEUPDATETEXT.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.FORCEUPDATETEXT.getCommand(npc)).send(sender);
+        }
+        else if(args[0].equals(NPCCommands.SETLINESPACING.getArgument())){
+            if(args.length < 4){
+                error(sender, "Use " + NPCCommands.SETLINESPACING.getCommand(npc));
+                return;
+            }
+            Double d = null;
+            if(MathUtils.isDouble(args[3])) d = Double.parseDouble(args[3]);
+            else if(args[3].equalsIgnoreCase("reset")) d = NPCAttributes.getDefaultLineSpacing();
+            if(d == null){
+                error(sender, "This value is not valid.");
+                return;
+            }
+            npc.setLineSpacing(d);
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set line spacing as §e" + npc.getLineSpacing());
+            if(npc.isCreated()) new ClickableText("§7You need to do §e" + NPCCommands.FORCEUPDATETEXT.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.FORCEUPDATETEXT.getCommand(npc)).send(sender);
         }
         else if(args[0].equals(NPCCommands.SETHIDETEXT.getArgument())){
             if(!npc.isCreated()){
@@ -425,16 +528,16 @@ public class NPCCommand extends CommandInstance {
                 return;
             }
             npc.setHideText(bo);
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set hide text as §e" + bo);
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set hide text as §e" + bo);
         }
         else if(args[0].equals(NPCCommands.SETITEM.getArgument())){
             if(args.length < 4){
                 error(sender, "Use " + NPCCommands.SETITEM.getCommand(npc));
                 return;
             }
-            ItemStack itemStack = player.getInventory().getItemInMainHand();
-            NPCSlot npcSlot = null;
-            try{ npcSlot = NPCSlot.valueOf(args[3].toUpperCase());}
+            ItemStack itemStack = playerTarget.getInventory().getItemInMainHand();
+            NPC.Slot npcSlot = null;
+            try{ npcSlot = NPC.Slot.valueOf(args[3].toUpperCase());}
             catch (Exception e){}
             if(npcSlot == null){
                 error(sender, "Incorrect slot. Use one of the suggested.");
@@ -450,23 +553,27 @@ public class NPCCommand extends CommandInstance {
                 }
                 itemStack = new ItemStack(material);
             }
-            npc.setItem(NPCSlot.valueOf(args[3].toUpperCase()), itemStack);
-            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + player.getName() + "§7 has been set item on §e" + args[3] + "§7 as §c" + itemStack.getType().name());
+            npc.setItem(NPC.Slot.valueOf(args[3].toUpperCase()), itemStack);
+            sender.sendMessage(getPrefix() + "§7The NPC §a" + id + "§7 for the player §b" + playerTarget.getName() + "§7 has been set item on §e" + args[3] + "§7 as §c" + itemStack.getType().name());
             if(npc.isCreated()){
                 new ClickableText("§7You need to do §e" + NPCCommands.UPDATE.getCommand(npc) + " §7to show it to the player.", "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.UPDATE.getCommand(npc)).send(sender);
                 return;
             }
-            sendNPCProgress(sender, npc);
+            if(playerSender != null) sendNPCProgress(playerSender, npc);
         }
     }
 
-    private void error(Player player, String text){
-        player.sendMessage("§c§lError §8| §7" + text);
+    private void error(CommandSender sender){
+        error(sender, "Invalid command.");
     }
 
-    private void errorCreated(Player sender, NPC npc){
+    private void error(CommandSender sender, String text){
+        sender.sendMessage("§c§lError §8| §7" + text);
+    }
+
+    private void errorCreated(CommandSender sender, NPC npc){
         error(sender, "This NPC is not created yet.");
-        new ClickableText("§7To create it use §e" + NPCCommands.CREATE.getCommand(npc), "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.CREATE.getCommand(npc)).send(sender);
+        if(sender instanceof Player) new ClickableText("§7To create it use §e" + NPCCommands.CREATE.getCommand(npc), "§eClick to write command.", ClickEvent.Action.SUGGEST_COMMAND, NPCCommands.CREATE.getCommand(npc)).send(sender);
     }
 
     private String t(){ return "§a✔ §7"; }
@@ -490,7 +597,7 @@ public class NPCCommand extends CommandInstance {
         int perpag = 4;
         int maxpag = ((total - 1) / perpag) + 1;
         if(pag > maxpag) return;
-        for(int i = 0; i < 20; i++)  player.sendMessage("");
+        for(int i = 0; i < 100; i++)  player.sendMessage("");
         player.sendMessage(" §c§lPlayerNPC commands §7(Page " + pag + "/" + maxpag + ")");
         player.sendMessage("");
         int aas = 0;
@@ -604,7 +711,6 @@ public class NPCCommand extends CommandInstance {
 
                 "\n§7This sets if the NPC will be collidable or not." +
                         "\n§7No need to set it. By default will not have collission." +
-                        "\n§cThis cannot be changed after the EntityPlayer is created." +
                         "\n" +
                         "\n§7Variables:" +
                         "\n§8• §a(player) §7The name of the player that will see the NPC" +
@@ -619,7 +725,6 @@ public class NPCCommand extends CommandInstance {
 
                 "\n§7This sets the glow color of an NPC." +
                         "\n§7No need to set it. By default will be white." +
-                        "\n§cThis cannot be changed after the EntityPlayer is created." +
                         "\n" +
                         "\n§7Variables:" +
                         "\n§8• §a(player) §7The name of the player that will see the NPC" +
@@ -654,6 +759,65 @@ public class NPCCommand extends CommandInstance {
                         "\n§8• §a(id) §7The ID of the NPC you decided on generation." +
                         "\n§8• §a(boolean) §7Value that can be true or false"
         ),
+        SETLINESPACING(
+                "setlinespacing",
+                "(player) (id) (double/reset)",
+                false,
+                "Set line spacing of an NPC",
+
+                "\n§7This sets the line spacing of the Hologram of an NPC." +
+                        "\n§7No need to set it. By default will be 0.27" +
+                        "\n" +
+                        "\n§7Variables:" +
+                        "\n§8• §a(player) §7The name of the player that will see the NPC" +
+                        "\n§8• §a(id) §7The ID of the NPC you decided on generation." +
+                        "\n§8• §a(double) §7Value of the line spacing for an NPC"
+        ),
+        SETTEXTALIGNMENT(
+                "settextalignment",
+                "(player) (id) (vector/reset)",
+                false,
+                "Set text alignment of an NPC",
+
+                "\n§7This sets the text alignment of the Hologram of an NPC." +
+                        "\n§7No need to set it. By default will be (0.0, 1.75, 0.0)" +
+                        "\n" +
+                        "\n§7Variables:" +
+                        "\n§8• §a(player) §7The name of the player that will see the NPC" +
+                        "\n§8• §a(id) §7The ID of the NPC you decided on generation." +
+                        "\n§8• §a(vector) §7The vector added to NPC location."
+        ),
+        SETTEXTOPACITY(
+                "settextopacity",
+                "(player) (id) (textopacity)",
+                false,
+                "Set text opacity of an NPC",
+
+                "\n§7This sets the text opacity of the Hologram of an NPC." +
+                        "\n§7No need to set it. By default will be LOWEST" +
+                        "\n" +
+                        "\n§7Variables:" +
+                        "\n§8• §a(player) §7The name of the player that will see the NPC" +
+                        "\n§8• §a(id) §7The ID of the NPC you decided on generation." +
+                        "\n§8• §a(textopacity) §7Value that can be one of the suggested." +
+                        "\n§8TextOpacity: §7lowest, low, medium, hard, harder, full"
+        ),
+        SETLINEOPACITY(
+                "setlineopacity",
+                "(player) (id) (line) (textopacity)",
+                false,
+                "Set line opacity of an NPC",
+
+                "\n§7This sets the text opacity of a line at the Hologram of an NPC." +
+                        "\n§7No need to set it. By default will be LOWEST" +
+                        "\n" +
+                        "\n§7Variables:" +
+                        "\n§8• §a(player) §7The name of the player that will see the NPC" +
+                        "\n§8• §a(id) §7The ID of the NPC you decided on generation." +
+                        "\n§8• §a(line) §7The line number that will be affected." +
+                        "\n§8• §a(textopacity) §7Value that can be one of the suggested." +
+                        "\n§8TextOpacity: §7lowest, low, medium, hard, harder, full"
+        ),
         SETFOLLOWLOOKTYPE(
                 "setfollowlooktype",
                 "(player) (id) (followlooktype)",
@@ -666,7 +830,8 @@ public class NPCCommand extends CommandInstance {
                         "\n§7Variables:" +
                         "\n§8• §a(player) §7The name of the player that will see the NPC" +
                         "\n§8• §a(id) §7The ID of the NPC you decided on generation." +
-                        "\n§8• §a(followlooktype) §7Value that can be one of the suggested"
+                        "\n§8• §a(followlooktype) §7Value that can be one of the suggested" +
+                        "\n§8FollowLookType: §7none, player, nearest_player, nearest_entity"
         ),
         CREATE(
                 "create",
@@ -696,7 +861,7 @@ public class NPCCommand extends CommandInstance {
         ),
         TELEPORT(
                 "teleport",
-                "(player) (id)",
+                "(player) (id) (player/location)",
                 false,
                 "Teleport an NPC",
 
@@ -705,7 +870,8 @@ public class NPCCommand extends CommandInstance {
                         "\n" +
                         "\n§7Variables:" +
                         "\n§8• §a(player) §7The name of the player that will see the NPC" +
-                        "\n§8• §a(id) §7The ID of the NPC you decided on generation."
+                        "\n§8• §a(id) §7The ID of the NPC you decided on generation." +
+                        "\n§8• §a(player/location) §7The name of the player or location (x y z)"
         ),
         LOOKAT(
                 "lookat",
@@ -749,7 +915,8 @@ public class NPCCommand extends CommandInstance {
                         "\n§7Variables:" +
                         "\n§8• §a(player) §7The name of the player that will see the NPC" +
                         "\n§8• §a(id) §7The ID of the NPC you decided on generation." +
-                        "\n§8• §a(npcpose) §7The pose of the NPC."
+                        "\n§8• §a(npcpose) §7The pose of the NPC." +
+                        "\n§8NPCPose: §7standing, gliding, sleeping, swimming, crouching"
         ),
         HIDE(
                 "hide",
@@ -916,11 +1083,11 @@ public class NPCCommand extends CommandInstance {
         if(npc == null) return;
         if(npc.isCreated()) return;
         String equip = "§cNone";
-        HashMap<NPCSlot, ItemStack> equipment = new HashMap<>();
-        Arrays.stream(NPCSlot.values()).filter(x-> npc.getEquipment(x) != null && !npc.getEquipment(x).getType().equals(Material.AIR)).forEach(x-> equipment.put(x, npc.getEquipment(x)));
+        HashMap<NPC.Slot, ItemStack> equipment = new HashMap<>();
+        Arrays.stream(NPC.Slot.values()).filter(x-> npc.getEquipment(x) != null && !npc.getEquipment(x).getType().equals(Material.AIR)).forEach(x-> equipment.put(x, npc.getEquipment(x)));
         if(!equipment.isEmpty()){
             equip = "";
-            for(NPCSlot slot : equipment.keySet()){
+            for(NPC.Slot slot : equipment.keySet()){
                 equip = equip + "\n    §8• §7" + slot.name().substring(0, 1).toUpperCase() + slot.name().substring(1).toLowerCase() + ": §e" + equipment.get(slot).getType().name();
             }
         }
@@ -958,27 +1125,33 @@ class NPCCommandCompleter implements TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String label, String[] args) {
         if(!label.equalsIgnoreCase(getCommandInstance().getCommandLabel())) return null;
-        if(!(sender instanceof Player)) return null;
-        Player player = (Player) sender;
         List<String> strings = new ArrayList<>();
-        if(!player.isOp()) return strings;
+        final Player playerSender = (sender instanceof Player) ? (Player) sender : null;
+        if(!sender.isOp()) return strings;
         if(args.length == 1){
             Arrays.asList(NPCCommand.NPCCommands.values()).stream().filter(x-> x.getArgument().startsWith(args[0])).forEach(x-> strings.add(x.getArgument()));
             if("help".startsWith(args[0]) || strings.isEmpty()) strings.add("help");
             return strings;
         }
         if(args.length == 2){
-            player.getWorld().getPlayers().stream().filter(x-> x.getName().toLowerCase().startsWith(args[1].toLowerCase())).forEach(x-> strings.add(x.getName()));
+            if(args[0].equalsIgnoreCase("help")){
+                int maxpag = ((NPCCommand.NPCCommands.values().length - 1) / 4) + 1;
+                for(int i = 1; i <= maxpag; i++) strings.add("" + i);
+                return strings;
+            }
+            Bukkit.getOnlinePlayers().stream().filter(x-> x.getName().toLowerCase().startsWith(args[1].toLowerCase())).forEach(x-> strings.add(x.getName()));
             return strings;
         }
         Player to = getCommandInstance().getPlugin().getServer().getPlayer(args[1]);
         if(to == null) return strings;
         if(args.length == 3) {
             if(args[0].equalsIgnoreCase(NPCCommand.NPCCommands.GENERATE.getArgument())) return strings;
-            NPCLib.getInstance().getAllNPCs(player).stream().filter(x-> x.getCode().startsWith(args[2])).forEach(x-> strings.add(x.getCode()));
+            NPCLib.getInstance().getAllNPCs(to).stream().filter(x-> x.getCode().startsWith(args[2])).forEach(x-> strings.add(x.getCode()));
             return strings;
         }
         if(args.length >= 4){
+            NPC npc = NPCLib.getInstance().getNPC(to, args[2]);
+            if(npc == null) return strings;
             String arg0 = args[0];
             if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETHIDETEXT.getArgument()) || arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETCOLLIDABLE.getArgument()) || arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETGLOWING.getArgument()) || arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETSHOWONTABLIST.getArgument())){
                 if(args.length == 4){
@@ -1003,30 +1176,59 @@ class NPCCommandCompleter implements TabCompleter {
                     Arrays.stream(NPC.FollowLookType.values()).filter(x-> x.name().toLowerCase().startsWith(args[3].toLowerCase())).forEach(x-> strings.add(x.name().toLowerCase()));
                 }
             }
-            if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETPOSE.getArgument())){
+            if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETTEXTOPACITY.getArgument())){
                 if(args.length == 4){
-                    Arrays.stream(NPC.NPCPose.values()).filter(x-> x.name().toLowerCase().startsWith(args[3].toLowerCase())).forEach(x-> strings.add(x.name().toLowerCase()));
+                    Arrays.stream(NPC.TextOpacity.values()).filter(x-> x.name().toLowerCase().startsWith(args[3].toLowerCase())).forEach(x-> strings.add(x.name().toLowerCase()));
                 }
             }
-            if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.LOOKAT.getArgument())){
+            if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETLINEOPACITY.getArgument())){
                 if(args.length == 4){
-                    player.getWorld().getPlayers().stream().filter(x-> x.getName().toLowerCase().startsWith(args[3].toLowerCase())).forEach(x-> strings.add(x.getName()));
-                    String x = "" + player.getLocation().getBlockX();
+                    List<Integer> lines = new ArrayList<>();
+                    for(int i = 1; i <= npc.getText().size(); i++) lines.add(i);
+                    lines.stream().filter(x-> x.toString().startsWith(args[3])).forEach(x-> strings.add(x.toString()));
+                }
+                if(args.length == 5){
+                    Arrays.stream(NPC.TextOpacity.values()).filter(x-> x.name().toLowerCase().startsWith(args[4].toLowerCase())).forEach(x-> strings.add(x.name().toLowerCase()));
+                    if("reset".startsWith(args[4].toLowerCase())) strings.add("reset");
+                }
+            }
+            if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETPOSE.getArgument())){
+                if(args.length == 4){
+                    Arrays.stream(NPC.Pose.values()).filter(x-> !x.isDeprecated() && x.name().toLowerCase().startsWith(args[3].toLowerCase())).forEach(x-> strings.add(x.name().toLowerCase()));
+                }
+            }
+            if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.LOOKAT.getArgument()) || arg0.equalsIgnoreCase(NPCCommand.NPCCommands.TELEPORT.getArgument())){
+                if(args.length == 4){
+                    npc.getWorld().getPlayers().stream().filter(x-> x.getName().toLowerCase().startsWith(args[3].toLowerCase())).forEach(x-> strings.add(x.getName()));
+                    String x = playerSender != null ? "" + playerSender.getLocation().getBlockX() : "0";
                     if(x.startsWith(args[3])) strings.add(x);
                     return strings;
                 }
                 if(args.length == 5 && MathUtils.isInteger(args[3])){
-                    String x = "" + player.getLocation().getBlockY();
+                    String x = playerSender != null ? "" + playerSender.getLocation().getBlockY() : "0";
                     if(x.startsWith(args[4])) strings.add(x);
                 }
-                if(args.length == 6 && MathUtils.isInteger(args[4])){
-                    String x = "" + player.getLocation().getBlockZ();
+                if(args.length == 6 && MathUtils.isInteger(args[3]) && MathUtils.isInteger(args[4])){
+                    String x = playerSender != null ? "" + playerSender.getLocation().getBlockZ() : "0";
                     if(x.startsWith(args[5])) strings.add(x);
+                }
+            }
+            if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETTEXTALIGNMENT.getArgument())){
+                if(args.length == 4){
+                    if("reset".startsWith(args[3])) strings.add("reset");
+                    if(Double.valueOf(npc.getTextAlignment().getX()).toString().startsWith(args[3])) strings.add("" + npc.getTextAlignment().getX());
+                    return strings;
+                }
+                if(args.length == 5 && MathUtils.isDouble(args[3])){
+                    if(Double.valueOf(npc.getTextAlignment().getY()).toString().startsWith(args[4])) strings.add("" + npc.getTextAlignment().getY());
+                }
+                if(args.length == 6 && MathUtils.isDouble(args[3]) && MathUtils.isDouble(args[4])){
+                    if(Double.valueOf(npc.getTextAlignment().getZ()).toString().startsWith(args[5])) strings.add("" + npc.getTextAlignment().getZ());
                 }
             }
             if(arg0.equalsIgnoreCase(NPCCommand.NPCCommands.SETITEM.getArgument())){
                 if(args.length == 4){
-                    Arrays.stream(NPCSlot.values()).filter(x-> x.name().toLowerCase().startsWith(args[3].toLowerCase())).forEach(x-> strings.add(x.name().toLowerCase()));
+                    Arrays.stream(NPC.Slot.values()).filter(x-> x.name().toLowerCase().startsWith(args[3].toLowerCase())).forEach(x-> strings.add(x.name().toLowerCase()));
                     return strings;
                 }
             }

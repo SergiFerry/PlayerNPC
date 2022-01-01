@@ -20,6 +20,7 @@ public class NPCShowEvent extends Event implements Cancellable {
     public NPCShowEvent(Player player, NPC npc) {
         this.player = player;
         this.npc = npc;
+        this.isCancelled = false;
         Bukkit.getPluginManager().callEvent(this);
     }
 
@@ -31,7 +32,7 @@ public class NPCShowEvent extends Event implements Cancellable {
         return player;
     }
 
-    public NPC getNpc() {
+    public NPC getNPC() {
         return npc;
     }
 

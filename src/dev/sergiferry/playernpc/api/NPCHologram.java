@@ -7,12 +7,12 @@ import net.minecraft.network.chat.ChatMessage;
 import net.minecraft.network.protocol.game.PacketPlayOutEntityMetadata;
 import net.minecraft.network.protocol.game.PacketPlayOutSpawnEntityLiving;
 import net.minecraft.server.level.WorldServer;
-import net.minecraft.server.network.PlayerConnection;
 import net.minecraft.world.entity.decoration.EntityArmorStand;
 import org.apache.commons.lang.Validate;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
@@ -23,43 +23,22 @@ public class NPCHologram {
 
     private NPC npc;
     private Location location;
-    private HashMap<Integer, EntityArmorStand> lines;
-    private List<String> text;
+    private HashMap<Integer, List<EntityArmorStand>> lines;
     private boolean canSee;
 
-    protected NPCHologram(NPC npc, List<String> text) {
+    protected NPCHologram(NPC npc) {
         this.npc = npc;
         this.canSee = false;
-        this.text = text;
         create();
     }
 
     private void create(){
         this.lines = new HashMap<>();
-        this.location = new Location(npc.getWorld(), npc.getX(), npc.getY() + (text.size() * 0.27) - 0.27, npc.getZ()).add(0, 2, 0);
-        for (int i = 1; i <= text.size(); i++) {
+        this.location = new Location(npc.getWorld(), npc.getX(), npc.getY(), npc.getZ()).add(npc.getTextAlignment());
+        for (int i = 1; i <= getText().size(); i++) {
             createLine();
-            setLine(i, text.get(i-1));
+            setLine(i, getText().get(i-1));
         }
-    }
-
-    protected void setLine(int line, String text) {
-        if(!lines.containsKey(line)) return;
-        EntityArmorStand as = lines.get(line);
-        as.e(true); //setNoGravity
-        as.j(true); //setInvisible
-        as.a(new ChatMessage(text)); //setCustomName
-        as.n(true); //setCustomNameVisible
-        if (text == "") as.n(false);
-    }
-
-    protected String getLine(int line) {
-        if(!lines.containsKey(line)) return "";
-        return lines.get(line).Z().getString();
-    }
-
-    protected boolean hasLine(int line){
-        return lines.containsKey(line);
     }
 
     protected void createLine() {
@@ -69,27 +48,52 @@ public class NPCHologram {
             line = i;
             break;
         }
+        NPC.TextOpacity textOpacity = getLinesOpacity().containsKey(line) ? getLinesOpacity().get(line) : npc.getTextOpacity();
         WorldServer world = null;
         try{ world = (WorldServer) NMSCraftWorld.getCraftWorldGetHandle().invoke(NMSCraftWorld.getCraftWorldClass().cast(location.getWorld()), new Object[0]);}catch (Exception e){}
         Validate.notNull(world, "Error at NMSCraftWorld");
-        EntityArmorStand armor = new EntityArmorStand(world, location.getX(), location.getY() - 0.27 * line, location.getZ());
-        armor.n(true); //setCustomNameVisible
-        armor.e(true); //setNoGravity
-        armor.a(new ChatMessage("§f")); //setCustomName
-        armor.j(true); //setInvisible
-        armor.t(true); //setMarker
-        lines.put(line, armor);
+        List<EntityArmorStand> armorStands = new ArrayList<>();
+        for(int i = 1; i <= textOpacity.getTimes(); i++){
+            EntityArmorStand armor = new EntityArmorStand(world, location.getX(), location.getY() + (npc.getLineSpacing() * ((getText().size() - line))), location.getZ());
+            armor.n(true); //setCustomNameVisible
+            armor.e(true); //setNoGravity
+            armor.a(new ChatMessage("§f")); //setCustomName
+            armor.j(true); //setInvisible
+            armor.t(true); //setMarker
+            armorStands.add(armor);
+        }
+        lines.put(line, armorStands);
+    }
+
+
+    protected void setLine(int line, String text) {
+        if(!lines.containsKey(line)) return;
+        for(EntityArmorStand as : lines.get(line)){
+            as.e(true); //setNoGravity
+            as.j(true); //setInvisible
+            as.a(new ChatMessage(text)); //setCustomName
+            as.n(text != null && text != ""); //setCustomNameVisible
+        }
+    }
+
+    protected String getLine(int line) {
+        if(!lines.containsKey(line)) return "";
+        return lines.get(line).get(0).Z().getString(); //Z getCustomName
+    }
+
+    protected boolean hasLine(int line){
+        return lines.containsKey(line);
     }
 
     protected void show(){
         if(canSee) return;
         if(npc.isHiddenText()) return;
         if(!npc.isInRange()) return;
-        PlayerConnection connection = NMSCraftPlayer.getPlayerConnection(getPlayer());
         for(Integer line : lines.keySet()){
-            EntityArmorStand armor = lines.get(line);
-            NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutSpawnEntityLiving(armor));
-            NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutEntityMetadata(armor.ae(), armor.ai(), true));
+            for(EntityArmorStand armor : lines.get(line)){
+                NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutSpawnEntityLiving(armor));
+                NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutEntityMetadata(armor.ae(), armor.ai(), true)); //ae getID //ai getDataWatcher
+            }
         }
         canSee = true;
     }
@@ -97,7 +101,9 @@ public class NPCHologram {
     protected void hide(){
         if(!canSee) return;
         for (Integer in : lines.keySet()) {
-            NMSCraftPlayer.sendPacket(getPlayer(), NMSPacketPlayOutEntityDestroy.createPacket(lines.get(in).ae()));
+            for(EntityArmorStand armor : lines.get(in)){
+                NMSCraftPlayer.sendPacket(getPlayer(), NMSPacketPlayOutEntityDestroy.createPacket(armor.ae())); //ae getID
+            }
         }
         canSee = false;
     }
@@ -118,10 +124,6 @@ public class NPCHologram {
         lines.clear();
     }
 
-    protected void setText(List<String> text){
-        this.text = text;
-    }
-
     protected boolean isCreatedLine(Integer line){
         return lines.containsKey(line);
     }
@@ -138,8 +140,11 @@ public class NPCHologram {
         return npc.getText();
     }
 
+    protected HashMap<Integer, NPC.TextOpacity> getLinesOpacity() { return npc.getLinesOpacity(); }
+
     protected NPC getNpc() {
         return npc;
     }
+
 }
 

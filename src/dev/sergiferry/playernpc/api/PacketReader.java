@@ -7,6 +7,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToMessageDecoder;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.PacketPlayInUseEntity;
+import net.minecraft.world.EnumHand;
 import org.bukkit.Bukkit;
 
 import java.lang.reflect.Field;
@@ -50,26 +51,32 @@ public class PacketReader {
     }
 
     private void readPacket(Packet<?> packet) {
-        //System.out.println("Packet >> " + packet);
         if(packet == null) return;
-        if (packet.getClass().getSimpleName().equalsIgnoreCase("PacketPlayInUseEntity")) {
-            int id = (int) getValue(packet, "a");
-            interact(id);
+        if (!packet.getClass().getSimpleName().equalsIgnoreCase("PacketPlayInUseEntity")) return;
+        int id = (int) getValue(packet, "a");
+        NPCInteractEvent.ClickType clickType;
+        try{
+            Object action = getValue(packet, "b");
+            EnumHand hand = (EnumHand) getValue(action, "a");
+            if(hand != null) clickType = NPCInteractEvent.ClickType.RIGHT_CLICK;
+            else clickType = NPCInteractEvent.ClickType.LEFT_CLICK;
         }
+        catch (Exception e){ clickType = NPCInteractEvent.ClickType.LEFT_CLICK; }
+        interact(id, clickType);
     }
 
-    private void interact(Integer id){
+    private void interact(Integer id, NPCInteractEvent.ClickType clickType){
         NPC npc = getNPCLib().getNPCPlayerManager(getNpcPlayerManager().getPlayer()).getNPC(id);
         if(npc == null) return;
-        interact(npc);
+        interact(npc, clickType);
     }
 
-    private void interact(NPC npc){
+    private void interact(NPC npc, NPCInteractEvent.ClickType clickType){
         if(npc == null) return;
-        if(lastClick.containsKey(npc) && System.currentTimeMillis() - lastClick.get(npc) < 200) return;
+        if(lastClick.containsKey(npc) && System.currentTimeMillis() - lastClick.get(npc) < npc.getInteractCooldown()) return;
         lastClick.put(npc, System.currentTimeMillis());
         Bukkit.getScheduler().scheduleSyncDelayedTask(npcPlayerManager.getNPCLib().getPlugin(), ()-> {
-            new NPCInteractEvent(getNpcPlayerManager().getPlayer(), npc, getNpcPlayerManager().getLastClick());
+            npc.interact(npcPlayerManager.getPlayer(), clickType);
         }, 1);
     }
 
@@ -80,10 +87,7 @@ public class PacketReader {
             field.setAccessible(true);
             result = field.get(instance);
             field.setAccessible(false);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (NoSuchFieldException | IllegalAccessException e) {}
         return result;
     }
 
@@ -94,4 +98,5 @@ public class PacketReader {
     protected NPCLib getNPCLib(){
         return npcPlayerManager.getNPCLib();
     }
+
 }

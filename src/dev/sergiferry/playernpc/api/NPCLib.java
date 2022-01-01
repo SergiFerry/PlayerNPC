@@ -1,17 +1,18 @@
 package dev.sergiferry.playernpc.api;
 
 import dev.sergiferry.playernpc.PlayerNPCPlugin;
-import dev.sergiferry.playernpc.api.events.NPCInteractEvent;
 import org.apache.commons.lang.Validate;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.craftbukkit.libs.org.apache.http.annotation.Experimental;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.Action;
-import org.bukkit.event.player.*;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.Plugin;
 
 import javax.annotation.Nonnull;
@@ -21,7 +22,7 @@ import java.util.Set;
 
 /**
  * NPCLib is a simple library to create NPCs and customize them.
- * Spigot resource https://www.spigotmc.org/resources/playernpc.93625/
+ * <p>Spigot resource https://www.spigotmc.org/resources/playernpc.93625/
  *
  * @author  SergiFerry
  * @since 2021.1
@@ -32,25 +33,23 @@ public class NPCLib implements Listener {
 
     private final Plugin plugin;
     private final HashMap<Player, NPCPlayerManager> playerManager;
-    private Double hideDistance;
     private UpdateLookType updateLookType;
     private Integer updateLookTicks;
+    private Integer taskID;
 
     /**
      * The {@link NPCLib} instance must be called thought {@link NPCLib#getInstance()}
-     * <p><strong>You must not call this constructor.</strong></p>
      *
      * @param plugin is the {@link PlayerNPCPlugin} instance
      *
      * @see NPCLib#getInstance()
      */
-    public NPCLib(PlayerNPCPlugin plugin){
+    private NPCLib(@Nonnull PlayerNPCPlugin plugin){
         this.plugin = plugin;
         this.playerManager = new HashMap<>();
+        this.updateLookType = UpdateLookType.MOVE_EVENT;
+        this.updateLookTicks = 5;
         instance = this;
-        hideDistance = 50.0;
-        updateLookType = UpdateLookType.MOVE_EVENT;
-        updateLookTicks = 5;
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
     }
 
@@ -199,6 +198,7 @@ public class NPCLib implements Listener {
      * <p>Less ticks will produce more lag</p>
      *
      * @param ticks the amount of ticks
+     * @since 2021.2
      * @see NPCLib#setUpdateLookType(UpdateLookType) 
      */
     public void setUpdateLookTicks(Integer ticks){
@@ -221,14 +221,17 @@ public class NPCLib implements Listener {
      * When the player is far enough, the NPC will temporally hide, in order
      * to be more efficient. And when the player approach, the NPC will be unhidden.
      * You can change each NPC Hide Distance, but by default, will be this value.
+     * <p>This method is Deprecated. Use {@link NPCAttributes#getDefaultHideDistance()}
      *
      * @return {@link Double} the distance in blocks
+     * @since 2021.1
      * @see NPCLib#setDefaultHideDistance(Double) 
      * @see NPC#setHideDistance(double) 
      * @see NPC#getHideDistance() 
      */
+    @Deprecated
     public Double getDefaultHideDistance() {
-        return hideDistance;
+        return NPCAttributes.getDefaultHideDistance();
     }
 
     /**
@@ -236,13 +239,27 @@ public class NPCLib implements Listener {
      * to be more efficient. And when the player approach, the NPC will be unhidden.
      * You can change each NPC Hide Distance, but by default, will be this value.
      *
+     * <p>This method is Deprecated. Use {@link NPCAttributes#setDefaultHideDistance(double)}
+     * @since 2021.1
+     *
      * @param hideDistance the distance in blocks
      * @see NPCLib#getDefaultHideDistance()
      * @see NPC#setHideDistance(double)
      * @see NPC#getHideDistance()
      */
+    @Deprecated
     public void setDefaultHideDistance(Double hideDistance) {
-        this.hideDistance = hideDistance;
+        NPCAttributes.setDefaultHideDistance(hideDistance);
+    }
+
+    /**
+     *
+     * @since 2022.1
+     * @return {@link NPCAttributes#getDefault()}
+     */
+    @Experimental
+    public NPCAttributes getDefaults(){
+        return NPCAttributes.getDefault();
     }
 
     /**
@@ -251,6 +268,7 @@ public class NPCLib implements Listener {
      * doing it when player is moving listening {@link PlayerMoveEvent}
      *
      * @return {@link UpdateLookType} if using ticks or PlayerMoveEvent
+     * @since 2021.2
      * @see NPCLib#setUpdateLookType(UpdateLookType) 
      */
     public UpdateLookType getUpdateLookType() {
@@ -290,8 +308,6 @@ public class NPCLib implements Listener {
         npcPlayerManager.getPacketReader().unInject();
     }
 
-    private Integer taskID;
-
     @EventHandler
     private void onJoin(PlayerJoinEvent event){ join(event.getPlayer()); }
 
@@ -309,13 +325,6 @@ public class NPCLib implements Listener {
         npcPlayerManager.showWorld(event.getPlayer().getWorld());
     }
 
-    @EventHandler(priority = EventPriority.LOWEST)
-    private void onInteract(PlayerInteractEvent event){
-        Player player = event.getPlayer();
-        if(event.getAction().equals(Action.PHYSICAL)) return;
-        getNPCPlayerManager(player).setLastClick(NPCInteractEvent.ClickType.getAction(event.getAction()));
-    }
-
     @EventHandler
     private void onMove(PlayerMoveEvent event){
         if(!getUpdateLookType().equals(UpdateLookType.MOVE_EVENT)) return;
@@ -331,7 +340,6 @@ public class NPCLib implements Listener {
     public enum UpdateLookType{
         MOVE_EVENT,
         TICKS,
-        ;
     }
 
 }
