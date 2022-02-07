@@ -2792,7 +2792,7 @@ public class NPC {
             }
 
             public enum Type{
-                NONE, FOLLOW_PLAYER, FOLLOW_ENTITY, FOLLOW_NPC, @Deprecated CUSTOM_PATH;
+                NONE, FOLLOW_PLAYER, FOLLOW_ENTITY, FOLLOW_NPC, @Deprecated CUSTOM_PATH, @Deprecated RANDOM_PATH;
             }
         }
 
