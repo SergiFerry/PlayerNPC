@@ -1,6 +1,13 @@
 package dev.sergiferry.playernpc.api;
 
 import dev.sergiferry.playernpc.PlayerNPCPlugin;
+import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.MessageToMessageDecoder;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.PacketPlayInUseEntity;
+import net.minecraft.world.EnumHand;
 import org.apache.commons.lang.Validate;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -16,9 +23,9 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.Plugin;
 
 import javax.annotation.Nonnull;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Set;
+import java.lang.reflect.Field;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * NPCLib is a simple library to create NPCs and customize them.
@@ -32,7 +39,7 @@ public class NPCLib implements Listener {
     private static NPCLib instance;
 
     private final Plugin plugin;
-    private final HashMap<Player, NPCPlayerManager> playerManager;
+    private final HashMap<Player, PlayerManager> playerManager;
     private UpdateLookType updateLookType;
     private Integer updateLookTicks;
     private Integer taskID;
@@ -221,7 +228,7 @@ public class NPCLib implements Listener {
      * When the player is far enough, the NPC will temporally hide, in order
      * to be more efficient. And when the player approach, the NPC will be unhidden.
      * You can change each NPC Hide Distance, but by default, will be this value.
-     * <p>This method is Deprecated. Use {@link NPCAttributes#getDefaultHideDistance()}
+     * <p>This method is Deprecated. Use {@link NPC.Attributes#getDefaultHideDistance()}
      *
      * @return {@link Double} the distance in blocks
      * @since 2021.1
@@ -231,7 +238,7 @@ public class NPCLib implements Listener {
      */
     @Deprecated
     public Double getDefaultHideDistance() {
-        return NPCAttributes.getDefaultHideDistance();
+        return NPC.Attributes.getDefaultHideDistance();
     }
 
     /**
@@ -239,7 +246,7 @@ public class NPCLib implements Listener {
      * to be more efficient. And when the player approach, the NPC will be unhidden.
      * You can change each NPC Hide Distance, but by default, will be this value.
      *
-     * <p>This method is Deprecated. Use {@link NPCAttributes#setDefaultHideDistance(double)}
+     * <p>This method is Deprecated. Use {@link NPC.Attributes#setDefaultHideDistance(double)}
      * @since 2021.1
      *
      * @param hideDistance the distance in blocks
@@ -249,17 +256,17 @@ public class NPCLib implements Listener {
      */
     @Deprecated
     public void setDefaultHideDistance(Double hideDistance) {
-        NPCAttributes.setDefaultHideDistance(hideDistance);
+        NPC.Attributes.setDefaultHideDistance(hideDistance);
     }
 
     /**
      *
      * @since 2022.1
-     * @return {@link NPCAttributes#getDefault()}
+     * @return {@link NPC.Attributes#getDefault()}
      */
     @Experimental
-    public NPCAttributes getDefaults(){
-        return NPCAttributes.getDefault();
+    public NPC.Attributes getDefaults(){
+        return NPC.Attributes.getDefault();
     }
 
     /**
@@ -289,21 +296,21 @@ public class NPCLib implements Listener {
 
     private PlayerNPCPlugin getPlayerNPCPlugin(){ return (PlayerNPCPlugin) plugin;}
 
-    protected NPCPlayerManager getNPCPlayerManager(Player player){
+    protected PlayerManager getNPCPlayerManager(Player player){
         if(playerManager.containsKey(player)) return playerManager.get(player);
-        NPCPlayerManager npcPlayerManager = new NPCPlayerManager(this, player);
+        PlayerManager npcPlayerManager = new PlayerManager(this, player);
         playerManager.put(player, npcPlayerManager);
         return npcPlayerManager;
     }
 
     private void join(Player player){
-        NPCPlayerManager npcPlayerManager = getNPCPlayerManager(player);
-        PacketReader reader = npcPlayerManager.getPacketReader();
+        PlayerManager npcPlayerManager = getNPCPlayerManager(player);
+        PlayerManager.PacketReader reader = npcPlayerManager.getPacketReader();
         reader.inject();
     }
 
     private void quit(Player player){
-        NPCPlayerManager npcPlayerManager = getNPCPlayerManager(player);
+        PlayerManager npcPlayerManager = getNPCPlayerManager(player);
         npcPlayerManager.destroyAll();
         npcPlayerManager.getPacketReader().unInject();
     }
@@ -320,7 +327,7 @@ public class NPCLib implements Listener {
     private void onPlayerChangedWorld(PlayerChangedWorldEvent event) {
         Player player = event.getPlayer();
         World from = event.getFrom();
-        NPCPlayerManager npcPlayerManager = getNPCPlayerManager(player);
+        PlayerManager npcPlayerManager = getNPCPlayerManager(player);
         npcPlayerManager.destroyWorld(from);
         npcPlayerManager.showWorld(event.getPlayer().getWorld());
     }
@@ -340,6 +347,196 @@ public class NPCLib implements Listener {
     public enum UpdateLookType{
         MOVE_EVENT,
         TICKS,
+    }
+
+    protected class PlayerManager {
+
+        private final NPCLib npcLib;
+        private final Player player;
+        private final HashMap<String, NPC> npcs;
+        private final PlayerManager.PacketReader packetReader;
+        protected final Map<World, Set<NPC>> hidden;
+        private final Long lastEnter;
+
+        protected PlayerManager(NPCLib npcLib, Player player) {
+            this.npcLib = npcLib;
+            this.player = player;
+            this.npcs = new HashMap<>();
+            this.packetReader = new PlayerManager.PacketReader(this);
+            this.hidden = new HashMap<>();
+            this.lastEnter = System.currentTimeMillis();
+        }
+
+        protected void set(String s, NPC npc){
+            npcs.put(s, npc);
+        }
+
+        protected NPC getNPC(Integer entityID){
+            return npcs.values().stream().filter(x-> x.isCreated() && x.getEntityPlayer().ae() == entityID).findAny().orElse(null);
+        }
+
+        protected void removeNPC(String code){
+            npcs.remove(code);
+        }
+
+        protected Set<NPC> getNPCs(String prefix){
+            return getNpcs().values().stream().filter(x-> x.getCode().startsWith(prefix)).collect(Collectors.toSet());
+        }
+
+        protected void updateMove(){
+            getNPCs(getPlayer().getWorld()).forEach(x->{
+                if(x.isCreated()) x.updateMove();
+            });
+        }
+
+        protected void destroyWorld(World world){
+            Set<NPC> r = new HashSet<>();
+            npcs.values().stream().filter(x-> x.getWorld().getName().equals(world.getName())).forEach(x->{
+                if(x.canSee()){
+                    x.hide();
+                    r.add(x);
+                }
+            });
+            hidden.put(world, r);
+        }
+
+        protected void showWorld(World world){
+            if(!hidden.containsKey(world)) return;
+            hidden.get(world).forEach(x-> {
+                if(x.isCreated()) x.show();
+            });
+            hidden.remove(world);
+        }
+
+        protected void destroyAll(){
+            Set<NPC> destroy = new HashSet<>();
+            destroy.addAll(npcs.values());
+            destroy.stream().forEach(x-> {
+                if(x.isCreated()){
+                    x.destroy();
+                }
+            });
+            npcs.clear();
+        }
+
+        protected Set<NPC> getNPCs(World world){
+            Validate.notNull(world, "World must be not null");
+            return npcs.values().stream().filter(x-> x.getWorld().equals(world)).collect(Collectors.toSet());
+        }
+
+        protected Set<NPC> getNPCs(){
+            return  npcs.values().stream().collect(Collectors.toSet());
+        }
+
+        protected NPC getNPC(String s){
+            if(!npcs.containsKey(s)) return null;
+            return npcs.get(s);
+        }
+
+        private HashMap<String, NPC> getNpcs() {
+            return npcs;
+        }
+
+        protected NPCLib getNPCLib() {
+            return npcLib;
+        }
+
+        protected Player getPlayer() {
+            return player;
+        }
+
+        protected PlayerManager.PacketReader getPacketReader() {
+            return packetReader;
+        }
+
+        protected Long getLastEnter() {
+            return lastEnter;
+        }
+
+        protected static class PacketReader {
+
+            private HashMap<NPC, Long> lastClick;
+            private PlayerManager npcPlayerManager;
+            private Channel channel;
+
+            protected PacketReader(PlayerManager npcPlayerManager){
+                this.npcPlayerManager = npcPlayerManager;
+                this.lastClick = new HashMap<>();
+            }
+
+            protected void inject() {
+                if(channel != null) return;
+                channel = NMSCraftPlayer.getPlayerConnection(npcPlayerManager.getPlayer()).a.k;
+                if(channel.pipeline() == null) return;
+                if(channel.pipeline().get("PacketInjector") != null) return;
+                channel.pipeline().addAfter("decoder", "PacketInjector", new MessageToMessageDecoder<PacketPlayInUseEntity>() {
+                    @Override
+                    protected void decode(ChannelHandlerContext channel, PacketPlayInUseEntity packet, List<Object> arg) throws Exception {
+                        arg.add(packet);
+                        readPacket(packet);
+                    }
+                });
+            }
+
+            protected void unInject() {
+                if(channel == null) return;
+                if(channel.pipeline() == null) return;
+                if(channel.pipeline().get("PacketInjector") == null) return;
+                channel.pipeline().remove("PacketInjector");
+                channel = null;
+            }
+
+            private void readPacket(Packet<?> packet) {
+                if(packet == null) return;
+                if (!packet.getClass().getSimpleName().equalsIgnoreCase("PacketPlayInUseEntity")) return;
+                int id = (int) getValue(packet, "a");
+                NPC.Interact.ClickType clickType;
+                try{
+                    Object action = getValue(packet, "b");
+                    EnumHand hand = (EnumHand) getValue(action, "a");
+                    if(hand != null) clickType = NPC.Interact.ClickType.RIGHT_CLICK;
+                    else clickType = NPC.Interact.ClickType.LEFT_CLICK;
+                }
+                catch (Exception e){ clickType = NPC.Interact.ClickType.LEFT_CLICK; }
+                interact(id, clickType);
+            }
+
+            private void interact(Integer id, NPC.Interact.ClickType clickType){
+                NPC npc = getNPCLib().getNPCPlayerManager(getPlayerManager().getPlayer()).getNPC(id);
+                if(npc == null) return;
+                interact(npc, clickType);
+            }
+
+            private void interact(NPC npc, NPC.Interact.ClickType clickType){
+                if(npc == null) return;
+                if(lastClick.containsKey(npc) && System.currentTimeMillis() - lastClick.get(npc) < npc.getInteractCooldown()) return;
+                lastClick.put(npc, System.currentTimeMillis());
+                Bukkit.getScheduler().scheduleSyncDelayedTask(npcPlayerManager.getNPCLib().getPlugin(), ()-> {
+                    npc.interact(npcPlayerManager.getPlayer(), clickType);
+                }, 1);
+            }
+
+            private Object getValue(Object instance, String name) {
+                Object result = null;
+                try {
+                    Field field = instance.getClass().getDeclaredField(name);
+                    field.setAccessible(true);
+                    result = field.get(instance);
+                    field.setAccessible(false);
+                } catch (NoSuchFieldException | IllegalAccessException e) {}
+                return result;
+            }
+
+            protected PlayerManager getPlayerManager() {
+                return npcPlayerManager;
+            }
+
+            protected NPCLib getNPCLib(){
+                return npcPlayerManager.getNPCLib();
+            }
+
+        }
+
     }
 
 }
