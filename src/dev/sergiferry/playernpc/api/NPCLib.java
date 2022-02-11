@@ -408,6 +408,15 @@ public class NPCLib implements Listener {
             hidden.remove(world);
         }
 
+        protected void changeWorld(NPC npc, World from, World to){
+            if(hidden.containsKey(from)){
+                if(hidden.get(from).contains(npc)){
+                    hidden.get(from).remove(npc);
+                    npc.show();
+                }
+            }
+        }
+
         protected void destroyAll(){
             Set<NPC> destroy = new HashSet<>();
             destroy.addAll(npcs.values());
