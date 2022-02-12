@@ -376,25 +376,37 @@ public class NPC {
     }
 
     /**
+     * Teleports {@link NPC#entityPlayer} to the specified coordinate.
+     * This method automatically updates to the Player client.
+     *
+     * @param world the world where will be teleported
+     * @param x X coordinate
+     * @param y Y coordinate
+     * @param z Z coordinate
+     * @return  the {@link NPC} instance.
+     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
+     *
      * @since 2022.2
-     * @param world
-     * @param x
-     * @param y
-     * @param z
-     * @return
+     * @see NPC#isCreated()
      */
     public NPC teleport(World world, double x, double y, double z){
         return teleport(world, x, y, z, yaw, pitch);
     }
 
     /**
+     * Teleports {@link NPC#entityPlayer} to the specified coordinate.
+     * This method automatically updates to the Player client.
+     *
+     * @param x X coordinate
+     * @param y Y coordinate
+     * @param z Z coordinate
+     * @param yaw Yaw horizontal
+     * @param pitch Pitch vertical
+     * @return  the {@link NPC} instance.
+     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
+     *
      * @since 2022.2
-     * @param x
-     * @param y
-     * @param z
-     * @param yaw
-     * @param pitch
-     * @return
+     * @see NPC#isCreated()
      */
     public NPC teleport(double x, double y, double z, float yaw, float pitch){
         return teleport(this.world, x, y, z, yaw, pitch);
@@ -1201,7 +1213,11 @@ public class NPC {
     }
 
     /**
+     * Sets the text alignment of the {@link NPC.Hologram} as the {@link Vector}
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
      *
+     * @return The {@link NPC} instance.
+     * @param vector The alignment of the hologram respective to the NPC
      * @since 2022.1
      */
     public NPC setTextAlignment(@Nonnull Vector vector){
@@ -1217,7 +1233,10 @@ public class NPC {
     }
 
     /**
+     * Sets the text alignment of the {@link NPC.Hologram} as the {@link Attributes#getDefaultTextAlignment()}
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
      *
+     * @return The {@link NPC} instance.
      * @since 2022.1
      */
     public NPC resetTextAlignment(){
@@ -1533,76 +1552,91 @@ public class NPC {
     }
 
     /**
+     * The {@link NPC} will follow another NPC around the world.
+     *
      * @since 2022.2
-     * @param npc
-     * @return
+     * @param npc the NPC that will be followed
+     * @return the {@link Move.Behaviour} of the {@link NPC}
      */
     public Move.Behaviour follow(NPC npc){
-        return moveBehaviour.setFollowPlayer();
+        Validate.isTrue(!npc.equals(this), "NPC cannot follow himself.");
+        return moveBehaviour.setFollowNPC(npc);
     }
 
     /**
+     * The {@link NPC} will follow another NPC around the world.
+     *
      * @since 2022.2
-     * @param npc
-     * @param min
-     * @param max
-     * @return
+     * @param npc the NPC that will be followed
+     * @param min the NPC won't approach less distance to the NPC
+     * @param max the NPC won't separate more distance of the NPC
+     * @return the {@link Move.Behaviour} of the {@link NPC}
      */
     public Move.Behaviour follow(NPC npc, double min, double max){
+        Validate.isTrue(!npc.equals(this), "NPC cannot follow himself.");
         return moveBehaviour.setFollowNPC(npc, min, max);
     }
 
     /**
+     * The {@link NPC} will follow the Player who sees it around the world.
+     *
      * @since 2022.2
-     * @return
+     * @return the {@link Move.Behaviour} of the {@link NPC}
      */
     public Move.Behaviour followPlayer(){
         return moveBehaviour.setFollowPlayer();
     }
 
     /**
+     * The {@link NPC} will follow the Player who sees it around the world.
+     *
+     * @param max the NPC won't separate more distance of the NPC
+     * @param min the NPC won't approach less distance to the NPC
      * @since 2022.2
-     * @param min
-     * @param max
-     * @return
+     * @return the {@link Move.Behaviour} of the {@link NPC}
      */
     public Move.Behaviour followPlayer(double min, double max){
         return moveBehaviour.setFollowPlayer(min, max);
     }
 
     /**
+     * The {@link NPC} will follow the Entity around the world.
+     *
+     * @param max the NPC won't separate more distance of the NPC
+     * @param min the NPC won't approach less distance to the NPC
      * @since 2022.2
-     * @param entity
-     * @param min
-     * @param max
-     * @return
+     * @return the {@link Move.Behaviour} of the {@link NPC}
      */
     public Move.Behaviour follow(Entity entity, double min, double max){
         return moveBehaviour.setFollowEntity(entity, min, max);
     }
 
     /**
+     * The {@link NPC} will follow the Entity around the world.
+     *
+     * @param min the NPC won't approach less distance to the NPC
      * @since 2022.2
-     * @param entity
-     * @param min
-     * @return
+     * @return the {@link Move.Behaviour} of the {@link NPC}
      */
     public Move.Behaviour follow(Entity entity, double min){
         return moveBehaviour.setFollowEntity(entity, min);
     }
 
     /**
+     * The {@link NPC} will follow the Entity around the world.
+     *
      * @since 2022.2
-     * @param entity
-     * @return
+     * @return the {@link Move.Behaviour} of the {@link NPC}
      */
     public Move.Behaviour follow(Entity entity){
         return moveBehaviour.setFollowEntity(entity);
     }
 
     /**
+     * The {@link NPC} will stop doing its move behaviour
+     *
      * @since 2022.2
-     * @return
+     * @return the {@link NPC} instance
      */
     public NPC cancelMoveBehaviour(){
         moveBehaviour.cancel();
@@ -1616,7 +1650,7 @@ public class NPC {
      * @return
      */
     public NPC.Move.Path setPath(Move.Path.Type type, List<Location> locations){
-        return getMoveBehaviour().setPath(locations, type);
+        return getMoveBehaviour().setPath(locations, type).start();
     }
 
     /**
@@ -1626,7 +1660,7 @@ public class NPC {
      * @return
      */
     public NPC.Move.Path setPath(Move.Path.Type type, Location... locations){
-        return getMoveBehaviour().setPath(Arrays.stream(locations).toList(), type);
+        return setPath(type, Arrays.stream(locations).toList());
     }
 
     /**
@@ -2837,9 +2871,10 @@ public class NPC {
                 this.actual = -1;
             }
 
-            public void start(){
+            public Path start(){
                 this.start = npc.getLocation();
                 next();
+                return this;
             }
 
             private void next(){
@@ -2870,7 +2905,7 @@ public class NPC {
 
             public enum Type{
                 NORMAL (false, false),
-                REPETITIVE (true, true),
+                REPETITIVE (true, false),
                 BACK_TO_START (false, true),
                 ;
 
@@ -2930,7 +2965,10 @@ public class NPC {
                     if(type.equals(Type.FOLLOW_PLAYER)) target = npc.player.getLocation();
                     if(type.equals(Type.FOLLOW_NPC)) target = followNPC.getLocation();
                     if(target == null) return;
-                    if(!target.getWorld().equals(npc.getWorld())) return;
+                    if(!target.getWorld().equals(npc.getWorld())){
+                        npc.teleport(target);
+                        return;
+                    }
                     if(npc.getMoveTask() == null){
                         npc.goTo(target, true);
                         return;
