@@ -310,6 +310,7 @@ public class NPC {
         this.pitch = pitch;
         if(!this.world.equals(world)) changeWorld(world);
         boolean show = canSee;
+        if(npcHologram != null) npcHologram.hide();
         reCreate();
         if(npcHologram != null) forceUpdateText();
         if(show) show();
@@ -375,26 +376,37 @@ public class NPC {
     }
 
     /**
+     * Teleports {@link NPC#entityPlayer} to the specified coordinate.
+     * This method automatically updates to the Player client.
+     *
+     * @param world the world where will be teleported
+     * @param x X coordinate
+     * @param y Y coordinate
+     * @param z Z coordinate
+     * @return  the {@link NPC} instance.
+     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
+     *
      * @since 2022.2
-     * @param world
-     * @param x
-     * @param y
-     * @param z
-     * @return
+     * @see NPC#isCreated()
      */
-    @Deprecated
     public NPC teleport(World world, double x, double y, double z){
         return teleport(world, x, y, z, yaw, pitch);
     }
 
     /**
+     * Teleports {@link NPC#entityPlayer} to the specified coordinate.
+     * This method automatically updates to the Player client.
+     *
+     * @param x X coordinate
+     * @param y Y coordinate
+     * @param z Z coordinate
+     * @param yaw Yaw horizontal
+     * @param pitch Pitch vertical
+     * @return  the {@link NPC} instance.
+     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
+     *
      * @since 2022.2
-     * @param x
-     * @param y
-     * @param z
-     * @param yaw
-     * @param pitch
-     * @return
+     * @see NPC#isCreated()
      */
     public NPC teleport(double x, double y, double z, float yaw, float pitch){
         return teleport(this.world, x, y, z, yaw, pitch);
@@ -1201,7 +1213,11 @@ public class NPC {
     }
 
     /**
+     * Sets the text alignment of the {@link NPC.Hologram} as the {@link Vector}
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
      *
+     * @return The {@link NPC} instance.
+     * @param vector The alignment of the hologram respective to the NPC
      * @since 2022.1
      */
     public NPC setTextAlignment(@Nonnull Vector vector){
@@ -1217,7 +1233,10 @@ public class NPC {
     }
 
     /**
+     * Sets the text alignment of the {@link NPC.Hologram} as the {@link Attributes#getDefaultTextAlignment()}
+     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
      *
+     * @return The {@link NPC} instance.
      * @since 2022.1
      */
     public NPC resetTextAlignment(){
@@ -1407,6 +1426,10 @@ public class NPC {
         return null;
     }
 
+    public Move.Task goTo(@Nonnull Location end){
+        return goTo(end, true);
+    }
+
     /**
      * @since 2022.2
      * @param end
@@ -1417,6 +1440,17 @@ public class NPC {
     public Move.Task goTo(@Nonnull Location end, boolean lookToEnd, @Nullable Move.Speed moveSpeed){
         setMoveSpeed(moveSpeed);
         return goTo(end, lookToEnd);
+    }
+
+    /**
+     * @since 2022.2
+     * @param end
+     * @param moveSpeed
+     * @return
+     */
+    public Move.Task goTo(@Nonnull Location end, @Nullable Move.Speed moveSpeed){
+        setMoveSpeed(moveSpeed);
+        return goTo(end, true);
     }
 
     /**
@@ -1481,25 +1515,186 @@ public class NPC {
         return this;
     }
 
+    /**
+     * @since 2022.2
+     * @return
+     */
+    public NPC hit(){
+        player.playSound(getLocation(), Sound.ENTITY_PLAYER_ATTACK_STRONG, 1.0F, 1.0F);
+        return playAnimation(Animation.TAKE_DAMAGE);
+    }
+
+    /**
+     * @since 2022.2
+     * @param onFire
+     * @return
+     */
     public NPC setOnFire(boolean onFire) {
         this.onFire = onFire;
         return this;
     }
 
+    /**
+     * @since 2022.2
+     * @param ticks
+     * @return
+     */
+    public NPC setFireTicks(@Nonnull Integer ticks){
+        setOnFire(true);
+        update();
+        Bukkit.getScheduler().runTaskLater(npcLib.getPlugin(), ()->{
+            if(isOnFire()){
+                setOnFire(false);
+                update();
+            }
+        }, ticks.longValue());
+        return this;
+    }
+
+    /**
+     * The {@link NPC} will follow another NPC around the world.
+     *
+     * @since 2022.2
+     * @param npc the NPC that will be followed
+     * @return the {@link Move.Behaviour} of the {@link NPC}
+     */
+    public Move.Behaviour follow(NPC npc){
+        Validate.isTrue(!npc.equals(this), "NPC cannot follow himself.");
+        return moveBehaviour.setFollowNPC(npc);
+    }
+
+    /**
+     * The {@link NPC} will follow another NPC around the world.
+     *
+     * @since 2022.2
+     * @param npc the NPC that will be followed
+     * @param min the NPC won't approach less distance to the NPC
+     * @param max the NPC won't separate more distance of the NPC
+     * @return the {@link Move.Behaviour} of the {@link NPC}
+     */
+    public Move.Behaviour follow(NPC npc, double min, double max){
+        Validate.isTrue(!npc.equals(this), "NPC cannot follow himself.");
+        return moveBehaviour.setFollowNPC(npc, min, max);
+    }
+
+    /**
+     * The {@link NPC} will follow the Player who sees it around the world.
+     *
+     * @since 2022.2
+     * @return the {@link Move.Behaviour} of the {@link NPC}
+     */
+    public Move.Behaviour followPlayer(){
+        return moveBehaviour.setFollowPlayer();
+    }
+
+    /**
+     * The {@link NPC} will follow the Player who sees it around the world.
+     *
+     * @param max the NPC won't separate more distance of the NPC
+     * @param min the NPC won't approach less distance to the NPC
+     * @since 2022.2
+     * @return the {@link Move.Behaviour} of the {@link NPC}
+     */
+    public Move.Behaviour followPlayer(double min, double max){
+        return moveBehaviour.setFollowPlayer(min, max);
+    }
+
+    /**
+     * The {@link NPC} will follow the Entity around the world.
+     *
+     * @param max the NPC won't separate more distance of the NPC
+     * @param min the NPC won't approach less distance to the NPC
+     * @since 2022.2
+     * @return the {@link Move.Behaviour} of the {@link NPC}
+     */
+    public Move.Behaviour follow(Entity entity, double min, double max){
+        return moveBehaviour.setFollowEntity(entity, min, max);
+    }
+
+    /**
+     * The {@link NPC} will follow the Entity around the world.
+     *
+     * @param min the NPC won't approach less distance to the NPC
+     * @since 2022.2
+     * @return the {@link Move.Behaviour} of the {@link NPC}
+     */
+    public Move.Behaviour follow(Entity entity, double min){
+        return moveBehaviour.setFollowEntity(entity, min);
+    }
+
+    /**
+     * The {@link NPC} will follow the Entity around the world.
+     *
+     * @since 2022.2
+     * @return the {@link Move.Behaviour} of the {@link NPC}
+     */
+    public Move.Behaviour follow(Entity entity){
+        return moveBehaviour.setFollowEntity(entity);
+    }
+
+    /**
+     * The {@link NPC} will stop doing its move behaviour
+     *
+     * @since 2022.2
+     * @return the {@link NPC} instance
+     */
+    public NPC cancelMoveBehaviour(){
+        moveBehaviour.cancel();
+        return this;
+    }
+
+    /**
+     * @since 2022.2
+     * @param type
+     * @param locations
+     * @return
+     */
+    public NPC.Move.Path setPath(Move.Path.Type type, List<Location> locations){
+        return getMoveBehaviour().setPath(locations, type).start();
+    }
+
+    /**
+     * @since 2022.2
+     * @param type
+     * @param locations
+     * @return
+     */
+    public NPC.Move.Path setPath(Move.Path.Type type, Location... locations){
+        return setPath(type, Arrays.stream(locations).toList());
+    }
+
+    /**
+     * @since 2022.2
+     * @param locations
+     * @return
+     */
+    public NPC.Move.Path setRepetitivePath(List<Location> locations){
+        return setPath(Move.Path.Type.REPETITIVE, locations);
+    }
+
+    /**
+     * @since 2022.2
+     * @param locations
+     * @return
+     */
+    public NPC.Move.Path setRepetitivePath(Location... locations){
+        return setRepetitivePath(Arrays.stream(locations).toList());
+    }
+
     @Deprecated
-    public NPC dropItem(ItemStack itemStack){
+    protected NPC dropItem(ItemStack itemStack){
         return this;
     }
 
     @Deprecated
-    public NPC dropItemInSlot(NPC.Slot slot){
+    protected NPC dropItemInSlot(NPC.Slot slot){
         ItemStack itemStack = getEquipment(slot);
         clearEquipment(slot);
         return dropItem(itemStack);
     }
 
     @Deprecated
-    public NPC dropItemInHand(){
+    protected NPC dropItemInHand(){
         return dropItemInSlot(Slot.MAINHAND);
     }
 
@@ -1575,7 +1770,6 @@ public class NPC {
         }
         updateLook();
         updatePlayerRotation();
-        //moveBehaviour.tick();
         //updateLocation();
         return this;
     }
@@ -1749,6 +1943,7 @@ public class NPC {
      * @return
      */
     protected NPC changeWorld(World world){
+        npcLib.getNPCPlayerManager(player).changeWorld(this, this.world, world);
         this.world = world;
         return this;
     }
@@ -1768,12 +1963,6 @@ public class NPC {
      */
     protected NPC clearMoveTask(){
         this.moveTask = null;
-        return this;
-    }
-
-    @Deprecated
-    private NPC setFireSeconds(int fireSeconds){
-        ((net.minecraft.world.entity.Entity)this.entityPlayer).g(fireSeconds);
         return this;
     }
 
@@ -1916,7 +2105,15 @@ public class NPC {
      * @since 2022.2
      * @return
      */
-    public Move.Behaviour getMoveBehaviour(){ return moveBehaviour; }
+    protected Move.Behaviour getMoveBehaviour(){ return moveBehaviour; }
+
+    /**
+     * @since 2022.2
+     * @return
+     */
+    public Move.Behaviour.Type getMoveBehaviourType(){
+        return moveBehaviour.getType();
+    }
 
     /**
      *
@@ -2422,7 +2619,7 @@ public class NPC {
 
     }
 
-    public static class Skin{
+    public static class Skin {
 
         protected static final Skin DEFAULT = new Skin(
                 "ewogICJ0aW1lc3RhbXAiIDogMTYyMTcxNTMxMjI5MCwKICAicHJvZmlsZUlkIiA6ICJiNTM5NTkyMjMwY2I0MmE0OWY5YTRlYmYxNmRlOTYwYiIsCiAgInByb2ZpbGVOYW1lIiA6ICJtYXJpYW5hZmFnIiwKICAic2lnbmF0dXJlUmVxdWlyZWQiIDogdHJ1ZSwKICAidGV4dHVyZXMiIDogewogICAgIlNLSU4iIDogewogICAgICAidXJsIiA6ICJodHRwOi8vdGV4dHVyZXMubWluZWNyYWZ0Lm5ldC90ZXh0dXJlLzFhNGFmNzE4NDU1ZDRhYWI1MjhlN2E2MWY4NmZhMjVlNmEzNjlkMTc2OGRjYjEzZjdkZjMxOWE3MTNlYjgxMGIiCiAgICB9CiAgfQp9",
@@ -2535,6 +2732,9 @@ public class NPC {
 
         public static Skin getPlayerSkin(String playerName){ return new Skin(playerName); }
 
+        /**
+         * @since 2022.2
+         */
         public static class Parts{
 
             private boolean cape;
@@ -2628,7 +2828,10 @@ public class NPC {
 
     }
 
-    public static class Move{
+    /**
+     * @since 2022.2
+     */
+    public static class Move {
 
         private Move() {
         }
@@ -2653,23 +2856,81 @@ public class NPC {
             }
         }
 
-        public static class Path{
+        protected static class Path{
 
             private NPC npc;
-            private boolean repetitive;
-            private boolean backToStart;
             private Location start;
             private List<Location> locations;
+            private int actual;
+            private Type type;
 
-            private Path(NPC npc) {
+            private Path(NPC npc, List<Location> locations, Type type) {
                 this.npc = npc;
+                this.locations = locations;
+                this.type = type;
+                this.actual = -1;
             }
 
-            public void start(){
+            public Path start(){
                 this.start = npc.getLocation();
+                next();
+                return this;
             }
+
+            private void next(){
+                actual++;
+                if(actual >= locations.size()){
+                    if(type.isBackToStart() && actual == locations.size()){
+                        go(start);
+                        return;
+                    }
+                    else finish();
+                }
+                go(locations.get(actual));
+            }
+
+            private void finish(){
+                if(type.isRepetitive()){
+                    actual = -1;
+                    start();
+                    return;
+                }
+                npc.getMoveBehaviour().cancel();
+            }
+
+            private void go(Location location){
+                if(npc.moveTask == null) npc.goTo(location);
+                else npc.moveTask.end = location;
+            }
+
+            public enum Type{
+                NORMAL (false, false),
+                REPETITIVE (true, false),
+                BACK_TO_START (false, true),
+                ;
+
+                private boolean repetitive;
+                private boolean backToStart;
+
+                Type(boolean repetitive, boolean backToStart){
+                    this.repetitive = repetitive;
+                    this.backToStart = backToStart;
+                }
+
+                public boolean isRepetitive() {
+                    return repetitive;
+                }
+
+                public boolean isBackToStart() {
+                    return backToStart;
+                }
+            }
+
         }
 
+        /**
+         * @since 2022.2
+         */
         public static class Behaviour{
 
             private NPC npc;
@@ -2695,7 +2956,7 @@ public class NPC {
             }
 
             protected void tick(){
-                if(type == null || type.equals(Type.NONE)) return;
+                if(type == null || type.equals(Type.NONE) || type.equals(Type.CUSTOM_PATH)) return;
                 if(type.equals(Type.FOLLOW_ENTITY) || type.equals(Type.FOLLOW_PLAYER) || type.equals(Type.FOLLOW_NPC)){
                     if(type.equals(Type.FOLLOW_ENTITY) && followEntity == null) return;
                     if(type.equals(Type.FOLLOW_NPC) && followNPC == null) return;
@@ -2704,7 +2965,10 @@ public class NPC {
                     if(type.equals(Type.FOLLOW_PLAYER)) target = npc.player.getLocation();
                     if(type.equals(Type.FOLLOW_NPC)) target = followNPC.getLocation();
                     if(target == null) return;
-                    if(!target.getWorld().equals(npc.getWorld())) return;
+                    if(!target.getWorld().equals(npc.getWorld())){
+                        npc.teleport(target);
+                        return;
+                    }
                     if(npc.getMoveTask() == null){
                         npc.goTo(target, true);
                         return;
@@ -2721,66 +2985,81 @@ public class NPC {
                     npc.getMoveTask().end = target;
                     return;
                 }
-                if(type.equals(Type.CUSTOM_PATH)){
-                    if(path == null) return;
+                if(type.equals(Type.RANDOM_PATH)){
                     return;
                 }
             }
 
-            public void setFollowEntity(Entity entity){
-                setFollowEntity(entity, followMinDistance, followMaxDistance);
+            public Move.Path setPath(List<Location> locations, Move.Path.Type type){
+                setType(Type.CUSTOM_PATH);
+                this.path = new Path(npc, locations, type);
+                return this.path;
             }
 
-            public void setFollowEntity(Entity entity, double followMinDistance){
-                setFollowEntity(entity, followMinDistance, followMaxDistance);
+            public Move.Behaviour setFollowEntity(Entity entity){
+                return setFollowEntity(entity, followMinDistance, followMaxDistance);
             }
 
-            public void setFollowEntity(Entity entity, double followMinDistance, double followMaxDistance){
+            public Move.Behaviour setFollowEntity(Entity entity, double followMinDistance){
+                return setFollowEntity(entity, followMinDistance, followMaxDistance);
+            }
+
+            public Move.Behaviour setFollowEntity(Entity entity, double followMinDistance, double followMaxDistance){
                 setType(Type.FOLLOW_ENTITY);
                 this.followMinDistance = followMinDistance;
                 this.followMaxDistance = followMaxDistance;
+                return this;
             }
 
-            public void setFollowNPC(NPC npc){
-                setFollowNPC(npc, followMinDistance, followMaxDistance);
+            public Move.Behaviour setFollowNPC(NPC npc){
+                return setFollowNPC(npc, followMinDistance, followMaxDistance);
             }
 
-            public void setFollowNPC(NPC npc, double followMinDistance){
-                setFollowNPC(npc, followMinDistance, followMaxDistance);
+            public Move.Behaviour setFollowNPC(NPC npc, double followMinDistance){
+                return setFollowNPC(npc, followMinDistance, followMaxDistance);
             }
 
-            public void setFollowNPC(NPC npc, double followMinDistance, double followMaxDistance){
+            public Move.Behaviour setFollowNPC(NPC npc, double followMinDistance, double followMaxDistance){
                 setType(Type.FOLLOW_NPC);
                 this.followMinDistance = followMinDistance;
                 this.followMaxDistance = followMaxDistance;
+                return this;
             }
 
-            public void setFollowPlayer(){
-                setFollowPlayer(followMinDistance, followMaxDistance);
+            public Move.Behaviour setFollowPlayer(){
+                return setFollowPlayer(followMinDistance, followMaxDistance);
             }
 
-            public void setFollowPlayer(double followMinDistance, double followMaxDistance){
+            public Move.Behaviour setFollowPlayer(double followMinDistance, double followMaxDistance){
                 setType(Type.FOLLOW_PLAYER);
                 this.followMinDistance = followMinDistance;
                 this.followMaxDistance = followMaxDistance;
+                return this;
             }
 
-            private void startTimer(){
-                if(taskID != null) return;
+            public Move.Behaviour cancel(){
+                return setType(Type.NONE);
+            }
+
+            private Move.Behaviour startTimer(){
+                if(taskID != null) return this;
                 taskID = Bukkit.getScheduler().runTaskTimer(PlayerNPCPlugin.getInstance(), ()->{
                     tick();
                 }, 20L, 20L).getTaskId();
+                return this;
             }
 
-            private void finishTimer(){
-                if(taskID == null) return;
+            private Move.Behaviour finishTimer(){
+                if(taskID == null) return this;
                 Bukkit.getScheduler().cancelTask(taskID);
+                return this;
             }
 
-            private void setType(Type type) {
+            private Move.Behaviour setType(Type type) {
                 this.type = type;
                 if(type == Type.NONE) finishTimer();
                 else startTimer();
+                return this;
             }
 
             public Type getType() {
@@ -2792,7 +3071,7 @@ public class NPC {
             }
 
             public enum Type{
-                NONE, FOLLOW_PLAYER, FOLLOW_ENTITY, FOLLOW_NPC, @Deprecated CUSTOM_PATH, @Deprecated RANDOM_PATH;
+                NONE, FOLLOW_PLAYER, FOLLOW_ENTITY, FOLLOW_NPC, CUSTOM_PATH, @Deprecated RANDOM_PATH;
             }
         }
 
@@ -2808,6 +3087,7 @@ public class NPC {
             private boolean pause;
             private boolean lookToEnd;
             private FollowLookType lastFollowLookType;
+            private NPC.Pose lastNPCPose;
             private boolean checkSwimming;
             private boolean checkSlabCrouching;
             private boolean checkSlowness;
@@ -2824,6 +3104,7 @@ public class NPC {
             protected Task start(){
                 start = npc.getLocation();
                 this.lastFollowLookType = npc.getFollowLookType();
+                this.lastNPCPose = npc.getPose();
                 if(lookToEnd) npc.setFollowLookType(NPC.FollowLookType.NONE);
                 taskID = Bukkit.getScheduler().runTaskTimer(PlayerNPCPlugin.getInstance(), ()-> {
                     if(pause) return;
@@ -2838,6 +3119,10 @@ public class NPC {
             }
 
             private void tick(){
+                if(!npc.isCreated()){
+                    cancel(CancelCause.ERROR);
+                    return;
+                }
                 if(npc.getX().equals(end.getX()) && npc.getZ().equals(end.getZ())){
                     cancel(NPC.Move.Task.CancelCause.SUCCESS);
                     return;
@@ -2863,7 +3148,7 @@ public class NPC {
                     //JUMP
                     double jump = 1.0;
                     if(isStair(blockInLeg) || isSlab(blockInLeg)) jump = 0.5;
-                    else if(isLadder(blockInLegFrom)) uppingLadder = true;
+                    else if(checkLadders && isLadder(blockInLegFrom)) uppingLadder = true;
                     else jumpingBlock = true;
                     locY = blockInLeg.getY() + jump;
                 }
@@ -2887,12 +3172,10 @@ public class NPC {
                             npc.setSwimming(true);
                             npc.update();
                         }
-                        moveX = moveX * 3;
-                        moveZ = moveZ * 3;
-                        locY = blockInLeg.getY() + 0.5;
                     }
                     else if(npc.getPose().equals(Pose.SWIMMING)){
-                        npc.setPose(Pose.STANDING);
+                        if(lastNPCPose.equals(Pose.CROUCHING)) npc.setPose(Pose.CROUCHING);
+                        else npc.setPose(Pose.STANDING);
                         npc.update();
                     }
                 }
@@ -2902,11 +3185,9 @@ public class NPC {
                             npc.setPose(Pose.CROUCHING);
                             npc.update();
                         }
-                        moveX = moveX / 3;
-                        moveZ = moveZ / 3;
                     }
                     else{
-                        if(npc.getPose().equals(Pose.CROUCHING)){
+                        if(npc.getPose().equals(Pose.CROUCHING) && lastNPCPose != Pose.CROUCHING){
                             npc.setPose(Pose.STANDING);
                             npc.update();
                         }
@@ -2923,10 +3204,19 @@ public class NPC {
                     }
                 }
                 //
+                if(npc.getPose().equals(Pose.SWIMMING)){
+                    moveX = moveX * 3;
+                    moveZ = moveZ * 3;
+                    locY = blockInLeg.getY() + 0.5;
+                }
+                if(npc.getPose().equals(Pose.CROUCHING)){
+                    moveX = moveX / 3;
+                    moveZ = moveZ / 3;
+                }
                 moveY = locY - npc.getY();
                 if(moveY > 1.0) moveY = 1.0;
                 if(moveY < -1.0) moveY = -1.0;
-                if(checkLadders && uppingLadder){
+                if(uppingLadder){
                     moveX = 0.00;
                     moveZ = 0.00;
                     if(moveY > 0.01) moveY = 0.05;
@@ -2952,7 +3242,6 @@ public class NPC {
                     if(jumpingBlock) npc.getPlayer().sendMessage("§c§lJUMPING BLOCK");
                     if(falling) npc.getPlayer().sendMessage("§c§lFALLING");
                 }
-                if(!npc.isCreated()) return;
                 if(lookToEnd){
                     npc.lookAt(end);
                     npc.updatePlayerRotation();
@@ -3078,6 +3367,9 @@ public class NPC {
                 this.taskID = null;
                 npc.updateLocation();
                 npc.clearMoveTask();
+                if(npc.getMoveBehaviour().getType().equals(Behaviour.Type.CUSTOM_PATH) && npc.getMoveBehaviour().path != null){
+                    npc.getMoveBehaviour().path.next();
+                }
             }
 
             public boolean hasStarted(){
@@ -3096,11 +3388,12 @@ public class NPC {
             public enum CancelCause{
                 SUCCESS,
                 CANCELLED,
+                ERROR,
             }
         }
     }
 
-    public static class Events{
+    public static class Events {
 
         private Events(){}
 
@@ -3458,7 +3751,7 @@ public class NPC {
         }
     }
 
-    public static class Interact{
+    public static class Interact {
 
         private Interact(){}
 
@@ -3467,23 +3760,17 @@ public class NPC {
             private final NPC npc;
             private final NPC.Interact.Actions.Type actionType;
             private final NPC.Interact.ClickType clickType;
+            private final NPC.Placeholders placeholders;
 
             protected ClickAction(NPC npc, NPC.Interact.Actions.Type actionType, NPC.Interact.ClickType clickType) {
                 this.npc = npc;
                 this.actionType = actionType;
                 this.clickType = clickType;
+                this.placeholders = new NPC.Placeholders(npc, npc.getPlayer());
             }
 
-            protected String getReplacedString(String string){
-                string = r(string, "playerName", getNPC().getPlayer().getName());
-                string = r(string, "playerUUID", getNPC().getPlayer().getUniqueId().toString());
-                string = r(string, "npcCode", getNPC().getCode());
-                string = r(string, "world", getNPC().getWorld().getName());
-                return string;
-            }
-
-            private String r(String command, String placeHolder, String value){
-                return command.replaceAll("\\{" + placeHolder +"\\}", value);
+            public String getReplacedString(String s) {
+                return placeholders.placeholder(s);
             }
 
             public NPC getNPC() {
@@ -3659,7 +3946,7 @@ public class NPC {
         }
     }
 
-    public static class Hologram{
+    public static class Hologram {
         private NPC npc;
         private Location location;
         private HashMap<Integer, List<EntityArmorStand>> lines;
@@ -3728,6 +4015,7 @@ public class NPC {
             if(canSee) return;
             if(npc.isHiddenText()) return;
             if(!npc.isInRange()) return;
+            if(!npc.isShownOnClient()) return;
             for(Integer line : lines.keySet()){
                 for(EntityArmorStand armor : lines.get(line)){
                     NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutSpawnEntityLiving(armor));
@@ -3823,6 +4111,9 @@ public class NPC {
         }
     }
 
+    /**
+     * @since 2022.1
+     */
     public static class Attributes {
 
         private static final Attributes DEFAULT = new Attributes(
@@ -4355,6 +4646,33 @@ public class NPC {
             if(textOpacity == null) textOpacity = NPC.Hologram.Opacity.LOWEST;
             this.textOpacity = textOpacity;
         }
+    }
+
+    /**
+     * @since 2022.2
+     */
+    public static class Placeholders {
+
+        private Player player;
+        private NPC npc;
+
+        public Placeholders(NPC npc, Player player){
+            this.npc = npc;
+            this.player = player;
+        }
+
+        public String placeholder(String string){
+            string = r(string, "playerName", player.getName());
+            string = r(string, "playerUUID", player.getUniqueId().toString());
+            string = r(string, "npcCode", npc.getCode());
+            string = r(string, "world", npc.getWorld().getName());
+            return string;
+        }
+
+        private String r(String string, String placeHolder, String value){
+            return string.replaceAll("\\{" + placeHolder +"\\}", value);
+        }
+
     }
 
 }
