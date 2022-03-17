@@ -1,6 +1,7 @@
 package dev.sergiferry.playernpc.api;
 
 import dev.sergiferry.playernpc.PlayerNPCPlugin;
+import dev.sergiferry.playernpc.nms.minecraft.NMSNetworkManager;
 import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -12,7 +13,6 @@ import org.apache.commons.lang.Validate;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
-import org.bukkit.craftbukkit.libs.org.apache.http.annotation.Experimental;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -67,14 +67,25 @@ public class NPCLib implements Listener {
      * @param code the id of the NPC to access it later
      * @param location the location that the NPC will spawn
      */
-    public NPC generateNPC(@Nonnull Player player, @Nonnull String code, @Nonnull Location location){
+    public NPC generateNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull Location location){
+        Validate.notNull(plugin, "You cannot create an NPC with a null Plugin");
         Validate.notNull(player, "You cannot create an NPC with a null Player");
         Validate.notNull(code, "You cannot create an NPC with a null code");
         Validate.notNull(location, "You cannot create an NPC with a null Location");
         Validate.notNull(location.getWorld(), "You cannot create NPC with a null world");
+        Validate.isTrue(!code.toLowerCase().startsWith("global_"), "You cannot create NPC with global tag");
+        return generatePlayerNPC(player, plugin, a(plugin, code), location);
+    }
+
+    @Deprecated
+    public NPC generateNPC(Player player, String code, Location location){
+        return generateNPC(player, getPlugin(), code, location);
+    }
+
+    private NPC generatePlayerNPC(Player player, Plugin plugin, String code, Location location){
         NPC old = getNPCPlayerManager(player).getNPC(code);
         if(old != null) return old;
-        return new NPC(this, player, code, location);
+        return new NPC(this, player, plugin, code, location);
     }
 
     /**
@@ -85,6 +96,14 @@ public class NPCLib implements Listener {
      * @param player the Player who sees the NPC
      * @param id the id of the NPC
      */
+    public NPC getNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String id){
+        Validate.notNull(player, "Player must not be null");
+        Validate.notNull(plugin, "Plugin must not be null");
+        Validate.notNull(id, "NPC id must not be null");
+        return getNPCPlayerManager(player).getNPC(a(plugin, id));
+    }
+
+    @Deprecated
     public NPC getNPC(@Nonnull Player player, @Nonnull String id){
         Validate.notNull(player, "Player must not be null");
         Validate.notNull(id, "NPC id must not be null");
@@ -106,6 +125,20 @@ public class NPCLib implements Listener {
     }
 
     /**
+     * Get a {@link Set} of {@link NPC} instances of a {@link Player} created by the {@link Plugin}.
+     *
+     * @return A {@link Set} of {@link NPC} instances.
+     *
+     * @param player the Player who sees the NPCs
+     * @param plugin the plugin that created that NPCs
+     */
+    public Set<NPC> getNPCs(@Nonnull Player player, @Nonnull Plugin plugin){
+        Validate.notNull(player, "Player must not be null");
+        Validate.notNull(plugin, "Plugin must not be null");
+        return getNPCs(player, plugin);
+    }
+
+    /**
      * Get a {@link Set} of {@link NPC} instances of a {@link Player} that are at on specific {@link World}.
      *
      * @return A {@link Set} of {@link NPC} instances.
@@ -119,6 +152,17 @@ public class NPCLib implements Listener {
         return getNPCPlayerManager(player).getNPCs(world);
     }
 
+    /**
+     * Get a {@link Set} of {@link NPC} instances of a {@link Player} with all the NPCs.
+     *
+     * @return A {@link Set} of {@link NPC} instances.
+     *
+     * @param player the Player who sees the NPC
+     */
+    public Set<NPC> getAllNPCs(@Nonnull Player player){
+        return getNPCPlayerManager(player).getNPCs();
+    }
+
 
     /**
      * Detects if the {@link Player} has an {@link NPC} with the specific ID.
@@ -128,6 +172,14 @@ public class NPCLib implements Listener {
      * @param player the Player who sees the NPC
      * @param id the id of the NPC
      */
+    public boolean hasNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String id){
+        Validate.notNull(player, "Player must not be null");
+        Validate.notNull(plugin, "Plugin must not be null");
+        Validate.notNull(id, "NPC id must not be null");
+        return getNPC(player, plugin, id) != null;
+    }
+
+    @Deprecated
     public boolean hasNPC(@Nonnull Player player, @Nonnull String id){
         Validate.notNull(player, "Player must not be null");
         Validate.notNull(id, "NPC id must not be null");
@@ -142,10 +194,11 @@ public class NPCLib implements Listener {
      * @param player the Player who sees the NPC
      * @param id the id of the NPC
      */
-    public NPC removeNPC(@Nonnull Player player, @Nonnull String id){
+    public NPC removeNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String id){
         Validate.notNull(player, "Player must not be null");
+        Validate.notNull(player, "Plugin must not be null");
         Validate.notNull(id, "NPC id must not be null");
-        return removeNPC(player, getNPC(player, id));
+        return removeNPC(player, getNPC(player, plugin, id));
     }
 
     /**
@@ -172,11 +225,12 @@ public class NPCLib implements Listener {
      *
      * @param code the ID of the NPCs
      */
-    public Set<NPC> getGlobalNPC(@Nonnull String code){
+    public Set<NPC> getGlobalNPC(@Nonnull Plugin plugin, @Nonnull String code){
+        Validate.notNull(plugin, "Plugin cannot be null");
         Validate.notNull(code, "Code cannot be null");
-        Set<NPC> npcs = new HashSet<>();
-        Bukkit.getOnlinePlayers().stream().filter(x-> getNPC(x, code) != null).forEach(x-> npcs.add(getNPC(x, code)));
-        return npcs;
+        Set<NPC> npc = new HashSet<>();
+        Bukkit.getOnlinePlayers().stream().filter(x-> getNPC(x, plugin, code) != null).forEach(x-> npc.add(getNPC(x, plugin, code)));
+        return npc;
     }
 
     /**
@@ -211,17 +265,6 @@ public class NPCLib implements Listener {
     public void setUpdateLookTicks(Integer ticks){
         this.updateLookTicks = ticks;
         if(updateLookType.equals(UpdateLookType.TICKS)) setUpdateLookType(UpdateLookType.TICKS);                        // This will update the ticks on the active run task.
-    }
-
-    /**
-     * Get a {@link Set} of {@link NPC} instances of a {@link Player} with all the NPCs.
-     *
-     * @return A {@link Set} of {@link NPC} instances.
-     *
-     * @param player the Player who sees the NPC
-     */
-    public Set<NPC> getAllNPCs(@Nonnull Player player){
-        return getNPCPlayerManager(player).getNPCs();
     }
 
     /**
@@ -264,7 +307,6 @@ public class NPCLib implements Listener {
      * @since 2022.1
      * @return {@link NPC.Attributes#getDefault()}
      */
-    @Experimental
     public NPC.Attributes getDefaults(){
         return NPC.Attributes.getDefault();
     }
@@ -284,6 +326,12 @@ public class NPCLib implements Listener {
 
     protected Plugin getPlugin() {
         return plugin;
+    }
+
+    private String a(Plugin plugin, String code){
+        String b = plugin.getName().toLowerCase() + ".";
+        if(code == null) return b;
+        return b + code;
     }
 
     private void onEnable(PlayerNPCPlugin playerNPCPlugin){
@@ -372,7 +420,7 @@ public class NPCLib implements Listener {
         }
 
         protected NPC getNPC(Integer entityID){
-            return npcs.values().stream().filter(x-> x.isCreated() && x.getEntityPlayer().ae() == entityID).findAny().orElse(null);
+            return npcs.values().stream().filter(x-> x.isCreated() && x.getEntity().ae() == entityID).findAny().orElse(null);
         }
 
         protected void removeNPC(String code){
@@ -433,6 +481,11 @@ public class NPCLib implements Listener {
             return npcs.values().stream().filter(x-> x.getWorld().equals(world)).collect(Collectors.toSet());
         }
 
+        protected Set<NPC> getNPCs(Plugin plugin){
+            Validate.notNull(plugin, "Plugin must be not null");
+            return npcs.values().stream().filter(x-> x.getPlugin().equals(plugin)).collect(Collectors.toSet());
+        }
+
         protected Set<NPC> getNPCs(){
             return  npcs.values().stream().collect(Collectors.toSet());
         }
@@ -475,7 +528,7 @@ public class NPCLib implements Listener {
 
             protected void inject() {
                 if(channel != null) return;
-                channel = NMSCraftPlayer.getPlayerConnection(npcPlayerManager.getPlayer()).a.k;
+                channel = NMSNetworkManager.getChannel(NMSCraftPlayer.getPlayerConnection(npcPlayerManager.getPlayer()).a);
                 if(channel.pipeline() == null) return;
                 if(channel.pipeline().get("PacketInjector") != null) return;
                 channel.pipeline().addAfter("decoder", "PacketInjector", new MessageToMessageDecoder<PacketPlayInUseEntity>() {

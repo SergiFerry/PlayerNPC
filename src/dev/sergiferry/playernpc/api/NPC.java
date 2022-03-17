@@ -10,6 +10,7 @@ import com.mojang.datafixers.util.Pair;
 import dev.sergiferry.playernpc.PlayerNPCPlugin;
 import dev.sergiferry.playernpc.nms.craftbukkit.NMSCraftItemStack;
 import dev.sergiferry.playernpc.nms.craftbukkit.NMSCraftScoreboard;
+import dev.sergiferry.playernpc.nms.minecraft.NMSEntityPlayer;
 import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutEntityDestroy;
 import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
 import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftServer;
@@ -44,6 +45,7 @@ import org.bukkit.event.Cancellable;
 import org.bukkit.event.Event;
 import org.bukkit.event.HandlerList;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.util.Vector;
 
 import javax.annotation.Nonnull;
@@ -64,6 +66,7 @@ import java.util.stream.Collectors;
 public class NPC {
 
     private final NPCLib npcLib;
+    private final Plugin plugin;
     private final String code;
     private final Player player;
     private World world;
@@ -76,37 +79,21 @@ public class NPC {
     private boolean hiddenText;
     private boolean hiddenToPlayer;
     private boolean shownOnTabList;
-    private double moveSpeed;
-    private String customTabListName;
     private List<NPC.Interact.ClickAction> clickActions;
     private HashMap<Integer, NPC.Hologram.Opacity> linesOpacity;
     private NPC.Move.Task moveTask;
     private NPC.Move.Behaviour moveBehaviour;
-    private boolean onFire;
 
     // NPC.Attributes
-    private NPC.Skin skin;
-    private List<String> text;
-    private HashMap<NPC.Slot, ItemStack> slots;
-    private boolean collidable;
-    private Double hideDistance;
-    private boolean glowing;
-    private NPC.Color glowingColor;
-    private NPC.FollowLookType followLookType;
-    private boolean showOnTabList;
-    private Long interactCooldown;
-    private Double lineSpacing;
-    private Vector textAlignment;
-    private NPC.Pose npcPose;
-    private NPC.Hologram.Opacity textOpacity;
+    private NPC.Attributes attributes;
 
     /**
-     * This constructor can only be invoked by using {@link NPCLib#generateNPC(Player, String, Location)}
+     * This constructor can only be invoked by using {@link NPCLib#generateNPC(Player, Plugin, String, Location)}
      * <p><strong>This only generates the NPC instance, you must {@link NPC#create()} and {@link NPC#show()} it after.</strong></p>
      *
      * @param npcLib always is {@link NPCLib#getInstance()}
      * @param player the {@link Player} that will see the NPC
-     * @param code an {@link String} that will let find this {@link NPC} instance at {@link NPCLib#getNPC(Player, String)}
+     * @param code an {@link String} that will let find this {@link NPC} instance at {@link NPCLib#getNPC(Player, Plugin, String)}
      * @param world the {@link World} that the NPC will be
      * @param x X coordinate
      * @param y Y coordinate
@@ -117,17 +104,19 @@ public class NPC {
      * @since 2021.1
      *
      * @see NPCLib#getInstance()
-     * @see NPCLib#generateNPC(Player, String, Location)
+     * @see NPCLib#generateNPC(Player, Plugin, String, Location)
      * @see NPC#create()
      * @see NPC#show()
      *
      */
-    protected NPC(@Nonnull NPCLib npcLib, @Nonnull Player player, @Nonnull String code, @Nonnull World world, double x, double y, double z, float yaw, float pitch){
+    protected NPC(@Nonnull NPCLib npcLib, @Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull World world, double x, double y, double z, float yaw, float pitch){
         Validate.notNull(npcLib, "Cannot generate NPC instance, NPCLib cannot be null.");
+        Validate.notNull(plugin, "Cannot generate NPC instance, Plugin cannot be null.");
         Validate.notNull(code, "Cannot generate NPC instance, code cannot be null.");
         Validate.notNull(player, "Cannot generate NPC instance, Player cannot be null.");
         Validate.notNull(world, "Cannot generate NPC instance, World cannot be null.");
         this.npcLib = npcLib;
+        this.plugin = plugin;
         this.code = code;
         this.player = player;
         this.world = world;
@@ -141,39 +130,24 @@ public class NPC {
         this.shownOnTabList = false;
         this.hiddenToPlayer = true;
         this.hiddenText = false;
-        this.moveSpeed = NPC.Move.Speed.NORMAL.doubleValue();
         this.tabListID = UUID.randomUUID();
         this.clickActions = new ArrayList<>();
         this.linesOpacity = new HashMap<>();
         this.moveTask = null;
         this.moveBehaviour = new NPC.Move.Behaviour(this);
-        this.onFire = false;
 
         //NPC Attributes
-        NPC.Attributes npcAttributes = new NPC.Attributes();
-        this.hideDistance = 0.0;
-        this.skin = npcAttributes.getSkin();
-        this.text = npcAttributes.getText();
-        this.slots = (HashMap<NPC.Slot, ItemStack>) npcAttributes.getSlots().clone();
-        this.collidable = npcAttributes.isCollidable();
-        this.glowing = npcAttributes.isGlowing();
-        this.glowingColor = npcAttributes.getGlowingColor();
-        this.followLookType = npcAttributes.getFollowLookType();
-        this.customTabListName = npcAttributes.getCustomTabListName();
-        this.showOnTabList = npcAttributes.isShowOnTabList();
-        this.interactCooldown = npcAttributes.getInteractCooldown();
-        this.lineSpacing = npcAttributes.getLineSpacing();
-        this.textAlignment = npcAttributes.getTextAlignment().clone();
-        this.npcPose = npcAttributes.getPose();
-        this.textOpacity = NPC.Hologram.Opacity.LOWEST;
+        this.attributes = new NPC.Attributes();
+
+        attributes.hideDistance = 0.0;
         npcLib.getNPCPlayerManager(player).set(code, this);
         Bukkit.getScheduler().scheduleSyncDelayedTask(npcLib.getPlugin(), ()-> {
-            hideDistance = NPC.Attributes.getDefault().getHideDistance();
+            this.attributes.hideDistance = NPC.Attributes.getDefault().getHideDistance();
         },1);
     }
 
     /**
-     * This constructor can only be invoked by using {@link NPCLib#generateNPC(Player, String, Location)}
+     * This constructor can only be invoked by using {@link NPCLib#generateNPC(Player, Plugin, String, Location)}
      * <p><strong>This only generates the NPC instance, you must {@link NPC#create()} and {@link NPC#show()} it after.</strong></p>
      *
      * @param npcLib always is {@link NPCLib#getInstance()}
@@ -184,12 +158,12 @@ public class NPC {
      * @since 2021.1
      *
      * @see NPCLib#getInstance()
-     * @see NPCLib#generateNPC(Player, String, Location)
+     * @see NPCLib#generateNPC(Player, Plugin, String, Location)
      * @see NPC#create()
      * @see NPC#show()
      */
-    protected NPC(@Nonnull NPCLib npcLib, @Nonnull Player player, @Nonnull String code, @Nonnull Location location){
-        this(npcLib, player, code, location.getWorld(), location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch());
+    protected NPC(@Nonnull NPCLib npcLib, @Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull Location location){
+        this(npcLib, player, plugin, code, location.getWorld(), location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch());
     }
 
     /*
@@ -200,8 +174,7 @@ public class NPC {
      * Creates the {@link NPC#entityPlayer} of the {@link NPC}, but it doesn't
      * show it to the player until {@link NPC#show()}.
      *
-     * @return  The {@link NPC} instance.
-     * @throws  IllegalArgumentException if {@link NPC#skin} equals {@code null}
+     * @throws IllegalArgumentException if {@link NPC#getSkin()} equals {@code null}
      * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code true}
      *          because it means that the {@link NPC#entityPlayer} is created yet.
      *
@@ -209,8 +182,8 @@ public class NPC {
      *
      * @see     NPC#show()
      */
-    public NPC create(){
-        Validate.notNull(skin, "Failed to create the NPC. The NPC.Skin has not been configured.");
+    public void create(){
+        Validate.notNull(attributes.skin, "Failed to create the NPC. The NPC.Skin has not been configured.");
         Validate.isTrue(entityPlayer == null, "Failed to create the NPC. This NPC has already been created before.");
         MinecraftServer server = NMSCraftServer.getMinecraftServer();
         WorldServer worldServer = NMSCraftWorld.getWorldServer(world);
@@ -222,40 +195,35 @@ public class NPC {
         updateSkin();
         updatePose();
         updateScoreboard();
-        return this;
     }
 
     /**
      * Updates the attributes of the {@link NPC}.
      * Some changes will need {@link NPC#forceUpdate()}
      *
-     * @return The {@link NPC} instance.
-     *
      * @since 2021.1
      *
      * @see NPC#update()
      * @see NPC#forceUpdate()
      */
-    public NPC update(){
+    public void update(){
         Validate.notNull(player, "Failed to update the NPC. The NPC does not have the assigned player.");
         Validate.notNull(entityPlayer, "Failed to update the NPC. The NPC has not been created yet.");
-        if(!canSee) return this;
+        if(!canSee) return;
         if(!hiddenToPlayer && !isInRange()){
             hideToPlayer();
-            return this;
+            return;
         }
         if(hiddenToPlayer && isInRange() && isInView()){
             showToPlayer();
-            return this;
+            return;
         }
         updatePose();
         updateLook();
         updateSkin();
-        //updateLocation();
         updatePlayerRotation();
         updateEquipment();
         updateMetadata();
-        return this;
     }
 
     /**
@@ -263,7 +231,6 @@ public class NPC {
      * This is useful after doing some big changes to the NPC, like setting the skin, glowing color, or collision rule.
      * Methods that require this force update will be documented. Otherwise use {@link NPC#update()}
      *
-     * @return The {@link NPC} instance
      * @throws IllegalArgumentException if {@link NPC#player} equals {@code null}
      * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
      * @since 2021.1
@@ -272,20 +239,18 @@ public class NPC {
      * @see NPC#isCreated()
      * @see NPC#update()
      */
-    public NPC forceUpdate(){
+    public void forceUpdate(){
         Validate.notNull(player, "Failed to force update the NPC. The NPC does not have the assigned player.");
         Validate.notNull(entityPlayer, "Failed to force update the NPC. The NPC has not been created yet.");
         reCreate();
         update();
         forceUpdateText();
-        return this;
     }
 
     /**
      * Teleports {@link NPC#entityPlayer} to the specified coordinate.
      * This method automatically updates to the Player client.
      *
-     * @return  The {@link NPC} instance.
      * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
      * @param x X coordinate
      * @param y Y coordinate
@@ -299,10 +264,10 @@ public class NPC {
      * @see NPC#teleport(Location)
      * @see NPC#teleport(double, double, double)
      */
-    public NPC teleport(World world, double x, double y, double z, float yaw, float pitch){
+    public void teleport(World world, double x, double y, double z, float yaw, float pitch){
         Validate.notNull(entityPlayer, "Failed to move the NPC. The NPC has not been created yet.");
         NPC.Events.Teleport npcTeleportEvent = new NPC.Events.Teleport(this, new Location(world, x, y, z, yaw, pitch));
-        if(npcTeleportEvent.isCancelled()) return this;
+        if(npcTeleportEvent.isCancelled()) return;
         this.x = x;
         this.y = y;
         this.z = z;
@@ -315,7 +280,6 @@ public class NPC {
         if(npcHologram != null) forceUpdateText();
         if(show) show();
         else if(npcHologram != null) hideText();
-        return this;
     }
 
     /**
@@ -323,7 +287,6 @@ public class NPC {
      * This method automatically updates to the Player client.
      *
      * @param entity The entity that will teleport to.
-     * @return The {@link NPC} instance.
      * @throws IllegalArgumentException if {@link Entity#getWorld()} is different of {@link NPC#getWorld()}
      * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
      *
@@ -333,10 +296,9 @@ public class NPC {
      * @see NPC#teleport(double, double, double)
      * @see NPC#teleport(double, double, double, float, float)
      */
-    public NPC teleport(@Nonnull Entity entity){
+    public void teleport(@Nonnull Entity entity){
         Validate.notNull(entity, "Entity must be not null.");
-        //Validate.isTrue(entity.getWorld().getName().equals(world.getName()), "Entity must be at the same world.");
-        return teleport(entity.getLocation());
+        teleport(entity.getLocation());
     }
 
     /**
@@ -344,7 +306,6 @@ public class NPC {
      * This method automatically updates to the Player client.
      *
      * @param location The location that will teleport to.
-     * @return  The {@link NPC} instance.
      * @throws  IllegalArgumentException if location is {@code null}
      * @throws  IllegalArgumentException if location's {@link Location#getWorld()} is not the same as {@link NPC#world}
      * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
@@ -352,10 +313,9 @@ public class NPC {
      * @since 2021.1
      * @see     NPC#isCreated()
      */
-    public NPC teleport(@Nonnull Location location){
+    public void teleport(@Nonnull Location location){
         Validate.notNull(location, "Location must be not null.");
-        //Validate.isTrue(location.getWorld().getName().equals(world.getName()), "Location must be at the same world.");
-        return teleport(location.getWorld(), location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch());
+        teleport(location.getWorld(), location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch());
     }
 
     /**
@@ -365,14 +325,13 @@ public class NPC {
      * @param x X coordinate
      * @param y Y coordinate
      * @param z Z coordinate
-     * @return  the {@link NPC} instance.
      * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
      *
      * @since 2021.1
      * @see     NPC#isCreated()
      */
-    public NPC teleport(double x, double y, double z){
-        return teleport(world, x, y, z);
+    public void teleport(double x, double y, double z){
+        teleport(world, x, y, z);
     }
 
     /**
@@ -383,14 +342,13 @@ public class NPC {
      * @param x X coordinate
      * @param y Y coordinate
      * @param z Z coordinate
-     * @return  the {@link NPC} instance.
      * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
      *
      * @since 2022.2
      * @see NPC#isCreated()
      */
-    public NPC teleport(World world, double x, double y, double z){
-        return teleport(world, x, y, z, yaw, pitch);
+    public void teleport(World world, double x, double y, double z){
+        teleport(world, x, y, z, yaw, pitch);
     }
 
     /**
@@ -402,14 +360,13 @@ public class NPC {
      * @param z Z coordinate
      * @param yaw Yaw horizontal
      * @param pitch Pitch vertical
-     * @return  the {@link NPC} instance.
      * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
      *
      * @since 2022.2
      * @see NPC#isCreated()
      */
-    public NPC teleport(double x, double y, double z, float yaw, float pitch){
-        return teleport(this.world, x, y, z, yaw, pitch);
+    public void teleport(double x, double y, double z, float yaw, float pitch){
+        teleport(this.world, x, y, z, yaw, pitch);
     }
 
     /**
@@ -418,17 +375,15 @@ public class NPC {
      *
      * @param slot The slot that the item will be equipped.
      * @param itemStack The itemStack that will be equipped.
-     * @return The {@link NPC} instance.
      * @throws IllegalArgumentException if {@code slot} equals {@code null}
      *
      * @since 2021.1
      * @see NPC#update()
      */
-    public NPC setItem(@Nonnull NPC.Slot slot, @Nullable ItemStack itemStack){
+    public void setItem(@Nonnull NPC.Slot slot, @Nullable ItemStack itemStack){
         Validate.notNull(slot, "Failed to set item, NPC.Slot cannot be null");
         if(itemStack == null) itemStack = new ItemStack(Material.AIR);
-        this.slots.put(slot, itemStack);
-        return this;
+        attributes.slots.put(slot, itemStack);
     }
 
     /**
@@ -436,12 +391,11 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
      * @param itemStack The itemStack that will be equipped.
-     * @return The {@link NPC} instance.
      * @see NPC#update()
      * @since 2022.1
      */
-    public NPC setHelmet(@Nullable ItemStack itemStack){
-        return setItem(NPC.Slot.HELMET, itemStack);
+    public void setHelmet(@Nullable ItemStack itemStack){
+        setItem(NPC.Slot.HELMET, itemStack);
     }
 
     /**
@@ -449,12 +403,11 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
      * @param itemStack The itemStack that will be equipped.
-     * @return The {@link NPC} instance.
      * @see NPC#update()
      * @since 2022.1
      */
-    public NPC setChestPlate(@Nullable ItemStack itemStack){
-        return setItem(Slot.CHESTPLATE, itemStack);
+    public void setChestPlate(@Nullable ItemStack itemStack){
+        setItem(Slot.CHESTPLATE, itemStack);
     }
 
     /**
@@ -462,12 +415,11 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
      * @param itemStack The itemStack that will be equipped.
-     * @return The {@link NPC} instance.
      * @see NPC#update()
      * @since 2022.1
      */
-    public NPC setLeggings(@Nullable ItemStack itemStack){
-        return setItem(Slot.LEGGINGS, itemStack);
+    public void setLeggings(@Nullable ItemStack itemStack){
+        setItem(Slot.LEGGINGS, itemStack);
     }
 
     /**
@@ -475,12 +427,11 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
      * @param itemStack The itemStack that will be equipped.
-     * @return The {@link NPC} instance.
      * @see NPC#update()
      * @since 2022.1
      */
-    public NPC setBoots(@Nullable ItemStack itemStack){
-        return setItem(Slot.BOOTS, itemStack);
+    public void setBoots(@Nullable ItemStack itemStack){
+        setItem(Slot.BOOTS, itemStack);
     }
 
     /**
@@ -488,12 +439,11 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
      * @param itemStack The itemStack that will be equipped.
-     * @return The {@link NPC} instance.
      * @see NPC#update()
      * @since 2022.1
      */
-    public NPC setItemInRightHand(@Nullable ItemStack itemStack){
-        return setItem(NPC.Slot.MAINHAND, itemStack);
+    public void setItemInRightHand(@Nullable ItemStack itemStack){
+        setItem(NPC.Slot.MAINHAND, itemStack);
     }
 
     /**
@@ -501,12 +451,11 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
      * @param itemStack The itemStack that will be equipped.
-     * @return The {@link NPC} instance.
      * @see NPC#update()
      * @since 2022.1
      */
-    public NPC setItemInLeftHand(@Nullable ItemStack itemStack){
-        return setItem(NPC.Slot.OFFHAND, itemStack);
+    public void setItemInLeftHand(@Nullable ItemStack itemStack){
+        setItem(NPC.Slot.OFFHAND, itemStack);
     }
 
     /**
@@ -514,83 +463,73 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
      * @param slot The slot that will be cleared.
-     * @return The {@link NPC} instance.
      * @throws IllegalArgumentException if {@code slot} equals {@code null}
      *
      * @since 2021.1
      * @see NPC#update()
      */
-    public NPC clearEquipment(@Nonnull NPC.Slot slot){
-        return setItem(slot, null);
+    public void clearEquipment(@Nonnull NPC.Slot slot){
+        setItem(slot, null);
     }
 
     /**
      * Clears the equipment of the {@link NPC}
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
      * @since 2021.1
      *
      * @see NPC#update()
      */
-    public NPC clearEquipment(){
+    public void clearEquipment(){
         Arrays.stream(NPC.Slot.values()).forEach(x-> clearEquipment(x));
-        return this;
     }
 
     /**
      * Updates the {@link NPC#npcHologram}. If the amount of lines is different at the previous text, use {@link NPC#forceUpdateText()}
      *
-     * @return  The {@link NPC} instance.
      * @since 2021.1
      *
      * @see NPC#forceUpdateText()
      */
-    public NPC updateText(){
-        if(npcHologram == null) return this;
+    public void updateText(){
+        if(npcHologram == null) return;
         npcHologram.update();
-        return this;
     }
 
     /**
      * Re-creates the {@link NPC#npcHologram}. If the amount of lines is the same as the previous text, use {@link NPC#updateText()}
      *
-     * @return  The {@link NPC} instance.
      * @since 2021.1
      *
      * @see NPC#updateText()
      */
-    public NPC forceUpdateText(){
-        if(npcHologram == null) return this;
+    public void forceUpdateText(){
+        if(npcHologram == null) return;
         npcHologram.forceUpdate();
-        return this;
     }
 
     /**
      * Destroys the NPC, and can be created after.
      * To definitely destroy and remove the NPC instance use {@link NPCLib#removeNPC(Player, NPC)}
      *
-     * @return The {@link NPC} instance
      * @since 2021.1
      *
      * @see NPCLib#removeNPC(Player, NPC)
-     * @see NPCLib#removeNPC(Player, String)
+     * @see NPCLib#removeNPC(Player, org.bukkit.plugin.Plugin, String)
      */
-    public NPC destroy(){
+    public void destroy(){
         cancelMove();
         if(entityPlayer != null){
             if(canSee) hide();
             entityPlayer = null;
         }
         if(npcHologram != null) npcHologram.removeHologram();
-        return this;
     }
 
     /**
      * Shows the NPC to the player. It must be {@link NPC#isCreated()} to show it.
      * To hide it after, use {@link NPC#hide()}. This method calls {@link NPC.Events.Show}.
      *
-     * @return The {@link NPC} instance
      * @throws IllegalArgumentException if {@link NPC#getPlayer()} equals {@code null}
      * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
      *
@@ -599,26 +538,24 @@ public class NPC {
      * @see NPC#create()
      * @see NPC#hide()
      */
-    public NPC show(){
+    public void show(){
         Validate.notNull(player, "Failed to show NPC. The NPC does not have the assigned player.");
         Validate.notNull(entityPlayer, "Failed to show NPC. The NPC has not been created yet.");
-        if(canSee && !hiddenToPlayer) return this;
+        if(canSee && !hiddenToPlayer) return;
         NPC.Events.Show npcShowEvent = new NPC.Events.Show(getPlayer(), this);
-        if(npcShowEvent.isCancelled()) return this;
+        if(npcShowEvent.isCancelled()) return;
         canSee = true;
         if(!isInRange() || !isInView()){
             hiddenToPlayer = true;
-            return this;
+            return;
         }
         showToPlayer();
-        return this;
     }
 
     /**
      * Hides the NPC from the player. It must be {@link NPC#isCreated()} to hide it.
      * To show it again, use {@link NPC#show()}. This method calls {@link NPC.Events.Hide}.
      *
-     * @return The {@link NPC} instance
      * @throws IllegalArgumentException if {@link NPC#getPlayer()} equals {@code null}
      * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
      *
@@ -627,15 +564,15 @@ public class NPC {
      * @see NPC#create()
      * @see NPC#show()
      */
-    public NPC hide(){
+    public void hide(){
         Validate.notNull(player, "Failed to hide the NPC. The NPC does not have the assigned player.");
         Validate.notNull(entityPlayer, "Failed to hide the NPC. The NPC has not been created yet.");
-        if(!canSee) return this;
+        if(!canSee) return;
         NPC.Events.Hide npcHideEvent = new NPC.Events.Hide(getPlayer(), this);
-        if(npcHideEvent.isCancelled()) return this;
+        if(npcHideEvent.isCancelled()) return;
         hideToPlayer();
         canSee = false;
-        return this;
+        return;
     }
 
     /**
@@ -643,15 +580,14 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
      * @param entity The entity that will look at.
-     * @return The {@link NPC} instance.
      * @throws IllegalArgumentException if {@code entity} equals {@code null}
      *
      * @since 2021.1
      * @see NPC#update()
      */
-    public NPC lookAt(@Nonnull Entity entity){
+    public void lookAt(@Nonnull Entity entity){
         Validate.notNull(entity, "Failed to set look direction. The entity cannot be null");
-        return lookAt(entity.getLocation());
+        lookAt(entity.getLocation());
     }
 
     /**
@@ -659,7 +595,6 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
      * @param location The location that will look at.
-     * @return The {@link NPC} instance.
      * @throws IllegalArgumentException if {@code location} equals {@code null}
      * @throws IllegalArgumentException if NPC is not created yet
      * @throws IllegalArgumentException if the location's world is not the same as the NPC's world.
@@ -667,14 +602,14 @@ public class NPC {
      * @since 2021.1
      * @see NPC#update()
      */
-    public NPC lookAt(@Nonnull Location location){
+    public void lookAt(@Nonnull Location location){
         Validate.notNull(location, "Failed to set look direction. The location cannot be null.");
         Validate.notNull(entityPlayer, "Failed to set look direction. The NPC has not been created yet.");
         Validate.isTrue(location.getWorld().getName().equals(getWorld().getName()), "The location must be in the same world as NPC");
         Location npcLocation = new Location(world, x, y, z, yaw, pitch);
         Vector dirBetweenLocations = location.toVector().subtract(npcLocation.toVector());
         npcLocation.setDirection(dirBetweenLocations);
-        return lookAt(npcLocation.getYaw(), npcLocation.getPitch());
+        lookAt(npcLocation.getYaw(), npcLocation.getPitch());
     }
 
     /**
@@ -684,14 +619,12 @@ public class NPC {
      * @since 2022.2
      * @param yaw
      * @param pitch
-     * @return The {@link NPC} instance.
      */
-    public NPC lookAt(float yaw, float pitch){
+    public void lookAt(float yaw, float pitch){
         this.yaw = yaw; //yRot
         this.pitch = pitch; //xRot
         entityPlayer.o(yaw); //setYRot
         entityPlayer.p(pitch); //setXRot
-        return this;
     }
 
     /**
@@ -699,30 +632,26 @@ public class NPC {
      *
      * @param hide boolean if the text will be hidden or not
      * @since 2021.1
-     * @return The {@link NPC} instance.
      */
-    public NPC setHideText(boolean hide){
+    public void setHideText(boolean hide){
         boolean a = hiddenText;
         this.hiddenText = hide;
-        if(a == hide) return this;
-        if(npcHologram == null) return this;
+        if(a == hide) return;
+        if(npcHologram == null) return;
         if(hide) hideText();
         else showText();
-        return this;
     }
 
     /**
      * Sets whether the {@link NPC} is collidable or not.
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
      * @since 2021.1
      *
      * @see NPC#forceUpdate()
      */
-    public NPC setCollidable(boolean collidable) {
-        this.collidable = collidable;
-        return this;
+    public void setCollidable(boolean collidable) {
+        attributes.setCollidable(collidable);
     }
 
     /**
@@ -731,13 +660,12 @@ public class NPC {
      *
      * @param texture Texture of the skin
      * @param signature Signature of the skin
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#forceUpdate()
      */
-    public NPC setSkin(@Nonnull String texture, @Nonnull String signature){
-        return setSkin(new NPC.Skin(texture, signature));
+    public void setSkin(@Nonnull String texture, @Nonnull String signature){
+        setSkin(new NPC.Skin(texture, signature));
     }
 
     /**
@@ -747,13 +675,12 @@ public class NPC {
      * @param texture Texture of the skin
      * @param signature Signature of the skin
      * @param playerName Name of the skin owner, this is not necessary, but it will store it on the {@link NPC.Skin} instance.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#forceUpdate()
      */
-    public NPC setSkin(@Nonnull String texture, @Nonnull String signature, @Nullable String playerName){
-        return setSkin(new NPC.Skin(texture, signature, playerName));
+    public void setSkin(@Nonnull String texture, @Nonnull String signature, @Nullable String playerName){
+        setSkin(new NPC.Skin(texture, signature, playerName));
     }
 
     /**
@@ -761,16 +688,18 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
      *
      * @param playerName Name of the skin owner. It will fetch skin even if the player is not online.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#forceUpdate()
      */
-    public NPC setSkin(@Nullable String playerName){
-        if(playerName == null) return setSkin(NPC.Skin.DEFAULT);
+    public void setSkin(@Nullable String playerName){
+        if(playerName == null){
+            setSkin(Skin.STEVE);
+            return;
+        }
         String[] skin = NPC.Skin.getSkin(playerName);
         Validate.notNull(skin, "Failed to set NPC Skin. The Mojang API didn't respond.");
-        return setSkin(skin[0], skin[1], playerName);
+        setSkin(skin[0], skin[1], playerName);
     }
 
     /**
@@ -778,15 +707,17 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
      *
      * @param playerSkin Player that is online, that will fetch skin.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#forceUpdate()
      */
-    public NPC setSkin(@Nullable Player playerSkin){
-        if(playerSkin == null) return setSkin(NPC.Skin.DEFAULT);
+    public void setSkin(@Nullable Player playerSkin){
+        if(playerSkin == null){
+            setSkin(Skin.STEVE);
+            return;
+        }
         Validate.isTrue(playerSkin.isOnline(), "Failed to set NPC skin. Player must be online.");
-        return setSkin(playerSkin.getName());
+        setSkin(playerSkin.getName());
     }
 
     /**
@@ -794,114 +725,92 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
      *
      * @param npcSkin NPC.Skin with the texture and signature.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#forceUpdate()
      */
-    public NPC setSkin(@Nullable NPC.Skin npcSkin){
-        if(npcSkin == null) npcSkin = NPC.Skin.DEFAULT;
-        this.skin = npcSkin;
-        return this;
+    public void setSkin(@Nullable NPC.Skin npcSkin){
+        attributes.setSkin(npcSkin);
     }
 
     /**
      * Sets the {@link NPC.Skin} of the {@link NPC} as the Default minecraft skin.
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
-     *
      * @since 2021.1
      * @see NPC#forceUpdate()
      */
-    public NPC clearSkin(){
-        return setSkin((NPC.Skin) null);
+    public void clearSkin(){
+        setSkin((NPC.Skin) null);
     }
 
     /**
      * Sets the {@link Pose} of the {@link NPC}.
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
-     *
      * @since 2021.2
      * @see NPC#update()
      */
-    public NPC setPose(NPC.Pose npcPose){
-        if(npcPose == null) npcPose = NPC.Pose.STANDING;
-        this.npcPose = npcPose;
-        return this;
+    public void setPose(NPC.Pose pose){
+        attributes.setPose(pose);
     }
 
     /**
      * Sets the {@link Pose} of the {@link NPC} as {@link Pose#CROUCHING}.
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
-     *
      * @since 2021.2
      * @see NPC#update()
      */
-    public NPC setCrouching(boolean b){
-        if(b) return setPose(NPC.Pose.CROUCHING);
-        else if(this.npcPose.equals(NPC.Pose.CROUCHING)) return resetPose();
-        return this;
+    public void setCrouching(boolean b){
+        if(b) setPose(NPC.Pose.CROUCHING);
+        else if(getPose().equals(NPC.Pose.CROUCHING)) resetPose();
     }
 
     /**
      * Sets the {@link Pose} of the {@link NPC} as {@link Pose#SWIMMING}.
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
-     *
      * @since 2021.2
      * @see NPC#update()
      */
-    public NPC setSwimming(boolean b){
-        if(b) return setPose(NPC.Pose.SWIMMING);
-        else if(this.npcPose.equals(NPC.Pose.SWIMMING)) return resetPose();
-        return this;
+    public void setSwimming(boolean b){
+        if(b) setPose(Pose.SWIMMING);
+        else if(getPose().equals(Pose.SWIMMING)) resetPose();
     }
 
     /**
      * Sets the {@link Pose} of the {@link NPC} as {@link Pose#SLEEPING}.
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
-     *
      * @since 2021.2
      * @see NPC#update()
      */
-    public NPC setSleeping(boolean b){
-        if(b) return setPose(NPC.Pose.SLEEPING);
-        else if(this.npcPose.equals(NPC.Pose.SLEEPING)) return resetPose();
-        return this;
+    public void setSleeping(boolean b){
+        if(b) setPose(Pose.SLEEPING);
+        else if(getPose().equals(Pose.SLEEPING)) resetPose();
     }
 
     /**
      * Sets the {@link Pose} of the {@link NPC} as {@link Pose#STANDING}.
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
-     *
      * @since 2021.2
      * @see NPC#update()
      */
-    public NPC resetPose(){
-        return setPose(NPC.Pose.STANDING);
+    public void resetPose(){
+        setPose(NPC.Pose.STANDING);
     }
 
     /**
      * Clears the text above the {@link NPC}.
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
-     *
      * @since 2021.1
      * @see NPC#forceUpdateText()
      */
-    public NPC clearText(){
-        return setText(new ArrayList<>());
+    public void clearText(){
+        setText(new ArrayList<>());
     }
 
     /**
@@ -910,21 +819,19 @@ public class NPC {
      * {@link NPC#forceUpdateText()} if there are different amount of lines, to show it to the {@link Player}
      *
      * @param text The text above the NPC, each {@link String} will be one line.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#updateText()
      * @see NPC#forceUpdateText()
      */
-    public NPC setText(@Nonnull List<String> text){
-        this.text = text;
-        if(npcHologram == null) return this;
+    public void setText(@Nonnull List<String> text){
+        attributes.setText(text);
+        if(npcHologram == null) return;
         int i = 1;
         for(String s : text){
             npcHologram.setLine(i, s);
             i++;
         }
-        return this;
     }
 
     /**
@@ -933,14 +840,13 @@ public class NPC {
      * {@link NPC#forceUpdateText()} if there are different amount of lines, to show it to the {@link Player}
      *
      * @param text The text above the NPC, each {@link String} will be one line.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#updateText()
      * @see NPC#forceUpdateText()
      */
-    public NPC setText(@Nonnull String... text){
-        return setText(Arrays.asList(text));
+    public void setText(@Nonnull String... text){
+        setText(Arrays.asList(text));
     }
 
     /**
@@ -949,59 +855,51 @@ public class NPC {
      * {@link NPC#forceUpdateText()} if there are different amount of lines, to show it to the {@link Player}
      *
      * @param text The text above the NPC, it will be only one line.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#updateText()
      * @see NPC#forceUpdateText()
      */
-    public NPC setText(@Nonnull String text){
-        return setText(Arrays.asList(text));
+    public void setText(@Nonnull String text){
+        setText(Arrays.asList(text));
     }
 
     /**
      *
      * @param line
      * @param textOpacity
-     * @return
      * @since 2022.1
      */
-    public NPC setLineOpacity(int line, @Nullable NPC.Hologram.Opacity textOpacity){
+    public void setLineOpacity(int line, @Nullable NPC.Hologram.Opacity textOpacity){
         if(textOpacity == null) textOpacity = NPC.Hologram.Opacity.LOWEST;
         linesOpacity.put(line, textOpacity);
-        return this;
     }
 
     /**
      *
      * @param line
-     * @return
      * @since 2022.1
      */
-    public NPC resetLineOpacity(int line){
-        return setLineOpacity(line, NPC.Hologram.Opacity.LOWEST);
+    public void resetLineOpacity(int line){
+        setLineOpacity(line, NPC.Hologram.Opacity.LOWEST);
     }
 
     /**
      *
      * @param textOpacity
-     * @return
      * @see NPC#forceUpdateText()
      */
-    public NPC setTextOpacity(@Nullable NPC.Hologram.Opacity textOpacity){
-        if(textOpacity == null) textOpacity = NPC.Hologram.Opacity.LOWEST;
-        this.textOpacity = textOpacity;
-        return this;
+    public void setTextOpacity(@Nullable NPC.Hologram.Opacity textOpacity){
+        attributes.setTextOpacity(textOpacity);
     }
 
     /**
      *
-     * @return
      * @since 2022.1
      * @see NPC#forceUpdateText()
      */
-    public NPC resetTextOpacity(){
-        return setTextOpacity(NPC.Hologram.Opacity.LOWEST);
+    public void resetTextOpacity(){
+        setTextOpacity(NPC.Hologram.Opacity.LOWEST);
     }
 
     /**
@@ -1009,15 +907,14 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
      *
      * @param color The glowing color.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#forceUpdate()
      * @see NPC#setGlowing(boolean)
      * @see NPC#setGlowing(boolean, ChatColor)
      */
-    public NPC setGlowingColor(@Nullable ChatColor color){
-        return setGlowingColor(NPC.Color.getColor(color));
+    public void setGlowingColor(@Nullable ChatColor color){
+        setGlowingColor(NPC.Color.getColor(color));
     }
 
     /**
@@ -1025,17 +922,14 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
      *
      * @param color The glowing color.
-     * @return The {@link NPC} instance.
      *
      * @since 2022.2
      * @see NPC#forceUpdate()
      * @see NPC#setGlowing(boolean)
      * @see NPC#setGlowing(boolean, NPC.Color)
      */
-    public NPC setGlowingColor(@Nullable Color color){
-        if(color == null) color = Color.WHITE;
-        this.glowingColor = color;
-        return this;
+    public void setGlowingColor(@Nullable Color color){
+        attributes.setGlowingColor(color);
     }
 
     /**
@@ -1044,15 +938,14 @@ public class NPC {
      *
      * @param glowing Whether it's glowing or not.
      * @param color The glowing color.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#forceUpdate()
      * @see NPC#setGlowingColor(ChatColor)
      * @see NPC#setGlowing(boolean)
      */
-    public NPC setGlowing(boolean glowing, @Nullable ChatColor color){
-        return setGlowing(glowing, NPC.Color.getColor(color));
+    public void setGlowing(boolean glowing, @Nullable ChatColor color){
+        setGlowing(glowing, NPC.Color.getColor(color));
     }
 
     /**
@@ -1061,17 +954,15 @@ public class NPC {
      *
      * @param glowing Whether it's glowing or not.
      * @param color The glowing color.
-     * @return The {@link NPC} instance.
      *
      * @since 2022.2
      * @see NPC#forceUpdate()
      * @see NPC#setGlowingColor(NPC.Color)
      * @see NPC#setGlowing(boolean)
      */
-    public NPC setGlowing(boolean glowing, @Nullable Color color){
+    public void setGlowing(boolean glowing, @Nullable Color color){
         setGlowing(glowing);
         setGlowingColor(color);
-        return this;
     }
 
     /**
@@ -1079,16 +970,14 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
      *
      * @param glowing Whether it's glowing or not.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#update()
      * @see NPC#setGlowingColor(ChatColor)
      * @see NPC#setGlowing(boolean, ChatColor)
      */
-    public NPC setGlowing(boolean glowing){
-        this.glowing = glowing;
-        return this;
+    public void setGlowing(boolean glowing){
+        attributes.setGlowing(glowing);
     }
 
     /**
@@ -1098,17 +987,15 @@ public class NPC {
      * @param name The name will be visible at tab list. "{UUID}" will replace the uuid of the NPC. It cannot be larger
      *             than 16 characters, and it can be the same as another NPC.
      * @param show Whether it's showing or not.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#forceUpdate()
      * @see NPC#setCustomTabListName(String)
      * @see NPC#setShowOnTabList(boolean)
      */
-    public NPC setCustomTabListName(@Nullable String name, boolean show){
+    public void setCustomTabListName(@Nullable String name, boolean show){
         setCustomTabListName(name);
         setShowOnTabList(show);
-        return this;
     }
 
     /**
@@ -1116,17 +1003,14 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
      *
      * @param show Whether it's showing or not.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#forceUpdate()
      * @see NPC#setCustomTabListName(String, boolean)
      * @see NPC#setCustomTabListName(String)
      */
-    public NPC setShowOnTabList(boolean show){
-        if(showOnTabList == show) return this;
-        this.showOnTabList = show;
-        return this;
+    public void setShowOnTabList(boolean show){
+        attributes.setShowOnTabList(show);
     }
 
     /**
@@ -1135,47 +1019,39 @@ public class NPC {
      *
      * @param name The name will be visible at tab list. "{UUID}" will replace the uuid of the NPC. It cannot be larger
      *             than 16 characters, and it can be the same as another NPC.
-     * @return The {@link NPC} instance.
      *
      * @since 2021.1
      * @see NPC#forceUpdate()
      * @see NPC#setCustomTabListName(String, boolean)
      * @see NPC#setShowOnTabList(boolean)
      */
-    public NPC setCustomTabListName(@Nullable String name){
-        if(name == null) name = NPC.Attributes.getDefaultTabListName();
+    public void setCustomTabListName(@Nullable String name){
+        if(name == null) name = Attributes.getDefaultTabListName();
         final String finalName = getReplacedCustomName(name);
         Validate.isTrue(finalName.length() <= 16, "Error setting custom tab list name. Name must be 16 or less characters.");
         Validate.isTrue(getNPCLib().getNPCPlayerManager(player).getNPCs(world).stream().filter(x-> x.getReplacedCustomName().equals(finalName)).findAny().orElse(null) == null, "Error setting custom tab list name. There's another NPC with that name already.");
-        this.customTabListName = name;
-        return this;
+        attributes.setCustomTabListName(name);
     }
 
     /**
      * Sets the following look type of the {@link NPC}.
      *
      * @since 2021.1
-     * @return The {@link NPC} instance.
      *
      */
-    public NPC setFollowLookType(@Nullable FollowLookType followLookType) {
-        if(followLookType == null) followLookType = FollowLookType.NONE;
-        this.followLookType = followLookType;
-        return this;
+    public void setFollowLookType(@Nullable FollowLookType followLookType) {
+        attributes.setFollowLookType(followLookType);
     }
 
     /**
      * Sets the distance of auto hide of the {@link NPC}.
      *
-     * @return The {@link NPC} instance.
      * @throws IllegalArgumentException if hide distance is negative or 0
      *
      * @since 2021.1
      */
-    public NPC setHideDistance(double hideDistance) {
-        Validate.isTrue(hideDistance > 0.00, "The hide distance cannot be negative or 0");
-        this.hideDistance = hideDistance;
-        return this;
+    public void setHideDistance(double hideDistance) {
+        attributes.setHideDistance(hideDistance);
     }
 
     /**
@@ -1183,147 +1059,129 @@ public class NPC {
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
      *
      * @param lineSpacing The distance (y-axis) between the ArmorStands in NPCHologram.
-     * @return The {@link NPC} instance.
      * @since 2022.1
      *
      * @see NPC#forceUpdateText()
      * @see NPC#resetLineSpacing()
      * @see NPC#getLineSpacing()
      */
-    public NPC setLineSpacing(double lineSpacing){
-        if(lineSpacing < NPC.Attributes.VARIABLE_MIN_LINE_SPACING) lineSpacing = NPC.Attributes.VARIABLE_MIN_LINE_SPACING;
-        else if(lineSpacing > NPC.Attributes.VARIABLE_MAX_LINE_SPACING) lineSpacing = NPC.Attributes.VARIABLE_MAX_LINE_SPACING;
-        this.lineSpacing = lineSpacing;
-        return this;
+    public void setLineSpacing(double lineSpacing){
+        attributes.setLineSpacing(lineSpacing);
     }
 
     /**
      * Sets the line spacing of the {@link NPC.Hologram} to the default value ({@link NPC.Attributes#getDefaultLineSpacing()}).
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
      * @since 2022.1
      *
      * @see NPC#forceUpdateText()
      * @see NPC#setLineSpacing(double) 
      * @see NPC#getLineSpacing()
      */
-    public NPC resetLineSpacing(){
-        return setLineSpacing(NPC.Attributes.getDefault().getLineSpacing());
+    public void resetLineSpacing(){
+        setLineSpacing(NPC.Attributes.getDefault().getLineSpacing());
     }
 
     /**
      * Sets the text alignment of the {@link NPC.Hologram} as the {@link Vector}
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
      * @param vector The alignment of the hologram respective to the NPC
      * @since 2022.1
      */
-    public NPC setTextAlignment(@Nonnull Vector vector){
-        Validate.notNull(vector, "Failed to set text alignment. Vector cannot be null.");
-        if(vector.getX() > NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ) vector.setX(NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ);
-        else if(vector.getX() < -NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ) vector.setX(-NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ);
-        if(vector.getY() > NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_Y) vector.setY(NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_Y);
-        else if(vector.getY() < -NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_Y) vector.setY(-NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_Y);
-        if(vector.getZ() > NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ) vector.setZ(NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ);
-        else if(vector.getZ() < -NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ) vector.setZ(-NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ);
-        this.textAlignment = vector;
-        return this;
+    public void setTextAlignment(@Nonnull Vector vector){
+        attributes.setTextAlignment(vector);
     }
 
     /**
      * Sets the text alignment of the {@link NPC.Hologram} as the {@link Attributes#getDefaultTextAlignment()}
      * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
      *
-     * @return The {@link NPC} instance.
      * @since 2022.1
      */
-    public NPC resetTextAlignment(){
-        this.textAlignment = NPC.Attributes.getDefault().getTextAlignment();
-        return this;
+    public void resetTextAlignment(){
+        setTextAlignment(null);
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC setInteractCooldown(long milliseconds){
-        Validate.isTrue(milliseconds >= 0, "Error setting interact cooldown, cannot be negative.");
-        this.interactCooldown = milliseconds;
-        return this;
+    public void setInteractCooldown(long milliseconds){
+        attributes.setInteractCooldown(milliseconds);
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC resetInteractCooldown(){
-        return setInteractCooldown(NPC.Attributes.getDefault().getInteractCooldown());
+    public void resetInteractCooldown(){
+        setInteractCooldown(NPC.Attributes.getDefaultInteractCooldown());
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC addCustomClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull NPC.Interact.Actions.Custom.CustomAction customAction){
-        return addClickAction(new NPC.Interact.Actions.Custom(this, clickType,customAction));
+    public void addCustomClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull NPC.Interact.Actions.Custom.CustomAction customAction){
+        addClickAction(new NPC.Interact.Actions.Custom(this, clickType,customAction));
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC addCustomClickAction(@Nonnull NPC.Interact.Actions.Custom.CustomAction customAction){
-        return addCustomClickAction(null, customAction);
+    public void addCustomClickAction(@Nonnull NPC.Interact.Actions.Custom.CustomAction customAction){
+        addCustomClickAction(null, customAction);
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC addMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String... message){
-        return addClickAction(new NPC.Interact.Actions.Message(this, clickType, message));
+    public void addMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String... message){
+        addClickAction(new NPC.Interact.Actions.Message(this, clickType, message));
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC addMessageClickAction(@Nonnull String... message){
-        return addMessageClickAction(null, message);
+    public void addMessageClickAction(@Nonnull String... message){
+        addMessageClickAction(null, message);
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC addRunPlayerCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){
-        return addClickAction(new NPC.Interact.Actions.PlayerCommand(this, clickType, command));
+    public void addRunPlayerCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){
+        addClickAction(new NPC.Interact.Actions.PlayerCommand(this, clickType, command));
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC addRunPlayerCommandClickAction(@Nonnull String command){
-        return addRunPlayerCommandClickAction(null, command);
+    public void addRunPlayerCommandClickAction(@Nonnull String command){
+        addRunPlayerCommandClickAction(null, command);
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC addRunConsoleCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){
-        return addClickAction(new NPC.Interact.Actions.ConsoleCommand(this, clickType, command));
+    public void addRunConsoleCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){
+        addClickAction(new NPC.Interact.Actions.ConsoleCommand(this, clickType, command));
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC addRunConsoleCommandClickAction(@Nonnull String command){
-        return addRunConsoleCommandClickAction(null, command);
+    public void addRunConsoleCommandClickAction(@Nonnull String command){
+        addRunConsoleCommandClickAction(null, command);
     }
 
     /**
@@ -1332,36 +1190,33 @@ public class NPC {
      * @param server
      * @since 2022.2
      */
-    public NPC addConnectBungeeServerClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String server){
-        return addClickAction(new NPC.Interact.Actions.BungeeServer(this, clickType, server));
+    public void addConnectBungeeServerClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String server){
+        addClickAction(new NPC.Interact.Actions.BungeeServer(this, clickType, server));
     }
 
     /**
      * @since 2022.2
      * @param server
-     * @return
      */
-    public NPC addConnectBungeeServerClickAction(@Nonnull String server){
-        return addConnectBungeeServerClickAction(null, server);
+    public void addConnectBungeeServerClickAction(@Nonnull String server){
+        addConnectBungeeServerClickAction(null, server);
     }
 
     /**
      * @since 2022.2
      * @param clickType
      * @param message
-     * @return
      */
-    public NPC addActionBarMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String message){
-        return addClickAction(new NPC.Interact.Actions.ActionBar(this, clickType, message));
+    public void addActionBarMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String message){
+        addClickAction(new NPC.Interact.Actions.ActionBar(this, clickType, message));
     }
 
     /**
      * @since 2022.2
      * @param message
-     * @return
      */
-    public NPC addActionBarMessageClickAction(@Nonnull String message){
-        return addActionBarMessageClickAction(null, message);
+    public void addActionBarMessageClickAction(@Nonnull String message){
+        addActionBarMessageClickAction(null, message);
     }
 
     /**
@@ -1372,10 +1227,9 @@ public class NPC {
      * @param fadeIn
      * @param stay
      * @param fadeOut
-     * @return
      */
-    public NPC addTitleMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){
-        return addClickAction(new NPC.Interact.Actions.Title(this, clickType, title, subtitle, fadeIn, stay, fadeOut));
+    public void addTitleMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){
+        addClickAction(new NPC.Interact.Actions.Title(this, clickType, title, subtitle, fadeIn, stay, fadeOut));
     }
 
     /**
@@ -1385,36 +1239,32 @@ public class NPC {
      * @param fadeIn
      * @param stay
      * @param fadeOut
-     * @return
      */
-    public NPC addTitleMessageClickAction(@Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){
-        return addTitleMessageClickAction(null, title, subtitle, fadeIn, stay, fadeOut);
+    public void addTitleMessageClickAction(@Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){
+        addTitleMessageClickAction(null, title, subtitle, fadeIn, stay, fadeOut);
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC resetClickActions(@Nonnull NPC.Interact.ClickType clickType){
+    public void resetClickActions(@Nonnull NPC.Interact.ClickType clickType){
         List<NPC.Interact.ClickAction> remove = this.clickActions.stream().filter(x-> x.getClickType() != null && x.getClickType().equals(clickType)).collect(Collectors.toList());
         clickActions.removeAll(remove);
-        return this;
     }
 
     /**
      *
      * @since 2022.1
      */
-    public NPC resetClickActions(){
+    public void resetClickActions(){
         this.clickActions = new ArrayList<>();
-        return this;
     }
 
     /**
      * @since 2022.2
      * @param end
      * @param lookToEnd
-     * @return
      */
     public Move.Task goTo(@Nonnull Location end, boolean lookToEnd){
         Validate.notNull(end, "Cannot move NPC to a null location.");
@@ -1435,7 +1285,6 @@ public class NPC {
      * @param end
      * @param lookToEnd
      * @param moveSpeed
-     * @return
      */
     public Move.Task goTo(@Nonnull Location end, boolean lookToEnd, @Nullable Move.Speed moveSpeed){
         setMoveSpeed(moveSpeed);
@@ -1455,11 +1304,10 @@ public class NPC {
 
     /**
      * @since 2022.2
-     * @return
      */
-    public NPC cancelMove(){
+    public void cancelMove(){
         if(this.moveTask != null) moveTask.cancel(Move.Task.CancelCause.CANCELLED);
-        return clearMoveTask();
+        clearMoveTask();
     }
 
     /**
@@ -1467,79 +1315,66 @@ public class NPC {
      * @param x
      * @param y
      * @param z
-     * @return
      */
-    protected NPC move(double x, double y, double z){
+    protected void move(double x, double y, double z){
         Validate.isTrue(x < 8 && y < 8 && z < 8, "NPC cannot move 8 blocks or more at once, use teleport instead");
         NPC.Events.Move npcMoveEvent = new NPC.Events.Move(this, new Location(world, this.x + x, this.y + y, this.z + z));
-        if(npcMoveEvent.isCancelled()) return this;
+        if(npcMoveEvent.isCancelled()) return;
         this.x += x;
         this.y += y;
         this.z += z;
         entityPlayer.g(this.x, this.y, this.z);
         if(npcHologram != null) npcHologram.move(new Vector(x, y, z));
         movePacket(x, y, z);
-        return this;
     }
 
     /**
      * @since 2022.2
      * @param moveSpeed
-     * @return
      */
-    public NPC setMoveSpeed(@Nullable Move.Speed moveSpeed){
-        if(moveSpeed == null) moveSpeed = Move.Speed.NORMAL;
-        return setMoveSpeed(moveSpeed.doubleValue());
+    public void setMoveSpeed(@Nullable Move.Speed moveSpeed){
+        attributes.setMoveSpeed(moveSpeed);
     }
 
     /**
      * @since 2022.2
      * @param moveSpeed
-     * @return
      */
-    public NPC setMoveSpeed(double moveSpeed){
-        if(moveSpeed <= 0.00) moveSpeed = 0.1;
-        this.moveSpeed = moveSpeed;
-        return this;
+    public void setMoveSpeed(double moveSpeed){
+        attributes.setMoveSpeed(moveSpeed);
     }
 
     /**
      * @since 2022.2
      * @param animation
-     * @return
      */
-    public NPC playAnimation(NPC.Animation animation){
-        if(animation.isDeprecated()) return this;
+    public void playAnimation(NPC.Animation animation){
+        if(animation.isDeprecated()) return;
         PacketPlayOutAnimation packet = new PacketPlayOutAnimation(entityPlayer, animation.getId());
         NMSCraftPlayer.sendPacket(player, packet);
-        return this;
     }
 
     /**
      * @since 2022.2
-     * @return
      */
-    public NPC hit(){
+    public void hit(){
         player.playSound(getLocation(), Sound.ENTITY_PLAYER_ATTACK_STRONG, 1.0F, 1.0F);
-        return playAnimation(Animation.TAKE_DAMAGE);
+        playAnimation(Animation.TAKE_DAMAGE);
     }
 
     /**
      * @since 2022.2
      * @param onFire
-     * @return
      */
-    public NPC setOnFire(boolean onFire) {
-        this.onFire = onFire;
-        return this;
+    public void setOnFire(boolean onFire) {
+        attributes.setOnFire(onFire);
     }
 
     /**
      * @since 2022.2
      * @param ticks
-     * @return
      */
-    public NPC setFireTicks(@Nonnull Integer ticks){
+    public void setFireTicks(@Nonnull Integer ticks){
         setOnFire(true);
         update();
         Bukkit.getScheduler().runTaskLater(npcLib.getPlugin(), ()->{
@@ -1548,7 +1383,6 @@ public class NPC {
                 update();
             }
         }, ticks.longValue());
-        return this;
     }
 
     /**
@@ -1636,11 +1470,9 @@ public class NPC {
      * The {@link NPC} will stop doing its move behaviour
      *
      * @since 2022.2
-     * @return the {@link NPC} instance
      */
-    public NPC cancelMoveBehaviour(){
+    public void cancelMoveBehaviour(){
         moveBehaviour.cancel();
-        return this;
     }
 
     /**
@@ -1682,27 +1514,26 @@ public class NPC {
     }
 
     @Deprecated
-    protected NPC dropItem(ItemStack itemStack){
-        return this;
+    protected void dropItem(ItemStack itemStack){
     }
 
     @Deprecated
-    protected NPC dropItemInSlot(NPC.Slot slot){
+    protected void dropItemInSlot(NPC.Slot slot){
         ItemStack itemStack = getEquipment(slot);
         clearEquipment(slot);
-        return dropItem(itemStack);
+        dropItem(itemStack);
     }
 
     @Deprecated
-    protected NPC dropItemInHand(){
-        return dropItemInSlot(Slot.MAINHAND);
+    protected void dropItemInHand(){
+        dropItemInSlot(Slot.MAINHAND);
     }
 
     /*
                 Protected and private access methods
     */
 
-    protected NPC reCreate(){
+    protected void reCreate(){
         Validate.notNull(player, "Failed to re-create the NPC. The NPC does not have the assigned player.");
         Validate.notNull(entityPlayer, "Failed to re-create the NPC. The NPC has not been created yet.");
         boolean show = canSee;
@@ -1710,80 +1541,71 @@ public class NPC {
         entityPlayer = null;
         create();
         if(show) show();
-        return this;
     }
 
-    protected NPC interact(@Nonnull Player player, @Nonnull NPC.Interact.ClickType clickType){
-        if(player == null || player.getUniqueId() != this.player.getUniqueId()) return this;
+    protected void interact(@Nonnull Player player, @Nonnull NPC.Interact.ClickType clickType){
+        if(player == null || player.getUniqueId() != this.player.getUniqueId()) return;
         NPC.Events.Interact npcInteractEvent = new NPC.Events.Interact(player, this, clickType);
-        if(npcInteractEvent.isCancelled()) return this;
+        if(npcInteractEvent.isCancelled()) return;
         getClickActions(clickType).forEach(x-> x.execute());
-        return this;
     }
 
-    protected NPC setClickActions(@Nonnull List<NPC.Interact.ClickAction> clickActions){
+    protected void setClickActions(@Nonnull List<NPC.Interact.ClickAction> clickActions){
         this.clickActions = clickActions;
-        return this;
     }
 
-    protected NPC setSlots(HashMap<NPC.Slot, ItemStack> slots){
-        this.slots = slots;
-        return this;
+    protected void setSlots(HashMap<NPC.Slot, ItemStack> slots){
+        attributes.setSlots(slots);
     }
 
     /**
      * Sets the {@link NPC#entityPlayer}'s {@link GameProfile}'s property "textures"
-     * as the {@link NPC#skin} previously setted with {@link NPC#setSkin(NPC.Skin)}.
+     * as the {@link Attributes#getSkin()} previously setted with {@link NPC#setSkin(NPC.Skin)}.
      * If the {@link NPC#entityPlayer} is {@link NPC#isCreated()}, you need
      * to do {@link NPC#update()} to send changes to the {@link NPC#player}'s client.
      *
-     * @return  the {@link NPC} instance.
      * @see     NPC#isCreated()
      * @see     NPC#setSkin(NPC.Skin)
      * @see     NPC#update()
      */
-    private NPC updateSkin(){
-        GameProfile gameProfile = entityPlayer.fp();
+    private void updateSkin(){
+        GameProfile gameProfile = NMSEntityPlayer.getGameProfile(entityPlayer);
         gameProfile.getProperties().get("textures").clear();
-        gameProfile.getProperties().put("textures", new Property("textures", skin.getTexture(), skin.getSignature()));
-        return this;
+        gameProfile.getProperties().put("textures", new Property("textures", attributes.skin.getTexture(), attributes.skin.getSignature()));
     }
 
 
-    private NPC updatePose(){
-        if(npcPose.equals(NPC.Pose.SLEEPING)) entityPlayer.e(new BlockPosition(x, y, z));
-        entityPlayer.b(npcPose.getEntityPose());
-        return this;
+    private void updatePose(){
+        if(getPose().equals(NPC.Pose.SLEEPING)) entityPlayer.e(new BlockPosition(x, y, z));
+        entityPlayer.b(getPose().getEntityPose());
     }
 
-    protected NPC updateMove(){
-        if(player == null) return this;
-        if(entityPlayer == null) return this;
-        if(!canSee) return this;
+    protected void updateMove(){
+        if(player == null) return;
+        if(entityPlayer == null) return;
+        if(!canSee) return;
         if(!hiddenToPlayer && !isInRange()){
             hideToPlayer();
-            return this;
+            return;
         }
         if(hiddenToPlayer && isInRange() && isInView()){
             showToPlayer();
-            return this;
+            return;
         }
         updateLook();
         updatePlayerRotation();
-        //updateLocation();
-        return this;
     }
 
-    private NPC updateLook(){
-        if(!player.getWorld().getName().equals(getWorld().getName())) return this;
-        if(followLookType.equals(FollowLookType.PLAYER)) lookAt(player);
-        else if(followLookType.equals(FollowLookType.NEAREST_PLAYER) || followLookType.equals(FollowLookType.NEAREST_ENTITY)){
+    private void updateLook(){
+        if(!player.getWorld().getName().equals(getWorld().getName())) return;
+        if(getFollowLookType().equals(FollowLookType.PLAYER)) lookAt(player);
+        else if(getFollowLookType().equals(FollowLookType.NEAREST_PLAYER) || getFollowLookType().equals(FollowLookType.NEAREST_ENTITY)){
             Bukkit.getScheduler().scheduleSyncDelayedTask(getNPCLib().getPlugin(), ()-> {
                 Entity near = null;
-                double var0 = hideDistance;
-                final boolean var3 = followLookType.equals(FollowLookType.NEAREST_PLAYER);
+                double var0 = getHideDistance();
+                final boolean var3 = getFollowLookType().equals(FollowLookType.NEAREST_PLAYER);
                 final Location npcLocation = getLocation();
-                for(Entity entities : world.getNearbyEntities(npcLocation, hideDistance, hideDistance, hideDistance)){
+                for(Entity entities : world.getNearbyEntities(npcLocation, getHideDistance(), getHideDistance(), getHideDistance())){
                     if(var3 && !(entities instanceof Player)) continue;
                     double var1 = entities.getLocation().distance(npcLocation);
                     if(var1 > var0) continue;
@@ -1794,15 +1616,14 @@ public class NPC {
                 lookAt(near);
             });
         }
-        return this;
     }
 
     private void updateEquipment(){
         List<Pair<EnumItemSlot, net.minecraft.world.item.ItemStack>> equipment = new ArrayList<>();
         for(NPC.Slot slot : NPC.Slot.values()){
             EnumItemSlot nmsSlot = slot.getNmsEnum(EnumItemSlot.class);
-            if(!slots.containsKey(slot)) slots.put(slot, new ItemStack(Material.AIR));
-            ItemStack item = slots.get(slot);
+            if(!getSlots().containsKey(slot)) getSlots().put(slot, new ItemStack(Material.AIR));
+            ItemStack item = getSlots().get(slot);
             net.minecraft.world.item.ItemStack craftItem = null;
             try{ craftItem = (net.minecraft.world.item.ItemStack) NMSCraftItemStack.getCraftItemStackAsNMSCopy().invoke(null, item); }
             catch (Exception e){}
@@ -1814,24 +1635,26 @@ public class NPC {
     }
 
     private void updatePlayerRotation(){
+        if(entityPlayer == null) return;
         NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntity.PacketPlayOutEntityLook(entityPlayer.ae(), (byte) ((yaw * 256 / 360)), (byte) ((pitch * 256 / 360)), false));
         NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntityHeadRotation(entityPlayer, (byte) (yaw * 256 / 360)));
     }
 
     private void updateLocation(){
+        if(entityPlayer == null) return;
         NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntityTeleport(entityPlayer));
     }
 
     private void updateScoreboard(){
-        GameProfile gameProfile = entityPlayer.fp();
+        GameProfile gameProfile = NMSEntityPlayer.getGameProfile(entityPlayer);
         Scoreboard scoreboard = null;
         try{ scoreboard = (Scoreboard) NMSCraftScoreboard.getCraftScoreBoardGetHandle().invoke(NMSCraftScoreboard.getCraftScoreBoardClass().cast(player.getScoreboard())); }catch (Exception e){}
         Validate.notNull(scoreboard, "Error at NMSCraftScoreboard");
         ScoreboardTeam scoreboardTeam = scoreboard.f(gameProfile.getName()) == null ? new ScoreboardTeam(scoreboard, gameProfile.getName()) : scoreboard.f(gameProfile.getName());
         scoreboardTeam.a(ScoreboardTeamBase.EnumNameTagVisibility.b); //EnumNameTagVisibility.NEVER
-        scoreboardTeam.a(glowingColor.getEnumChatFormat()); //setColor
+        scoreboardTeam.a(getGlowingColor().getEnumChatFormat()); //setColor
         ScoreboardTeamBase.EnumTeamPush var1 = ScoreboardTeamBase.EnumTeamPush.b;                                       //EnumTeamPush.NEVER
-        if(collidable) var1 = ScoreboardTeamBase.EnumTeamPush.a;                                                        //EnumTeamPush.ALWAYS
+        if(isCollidable()) var1 = ScoreboardTeamBase.EnumTeamPush.a;                                                        //EnumTeamPush.ALWAYS
         scoreboardTeam.a(var1);
         scoreboardTeam.g().add(gameProfile.getName());
         scoreboard.a(gameProfile.getName(), scoreboardTeam);
@@ -1849,7 +1672,7 @@ public class NPC {
     private void updateMetadata(){
         try {
             DataWatcher dataWatcher = entityPlayer.ai();
-            entityPlayer.i(glowing);
+            entityPlayer.i(isGlowing());
             Map<Integer, DataWatcher.Item<?>> map = (Map<Integer, DataWatcher.Item<?>>) FieldUtils.readDeclaredField(dataWatcher, "f", true);
             //http://wiki.vg/Entities#Entity
             //https://wiki.vg/Entity_metadata#Entity_Metadata_Format
@@ -1859,23 +1682,23 @@ public class NPC {
             byte initialBitMask = (Byte) item.b();
             byte b = initialBitMask;
             byte bitMaskIndex = (byte) 0x40;
-            if(glowing) b = (byte) (b | bitMaskIndex);
+            if(isGlowing()) b = (byte) (b | bitMaskIndex);
             else b = (byte) (b & ~(1 << bitMaskIndex));
             bitMaskIndex = (byte) 0x01;
-            if(onFire) b = (byte) (b | bitMaskIndex);
+            if(isOnFire()) b = (byte) (b | bitMaskIndex);
             else b = (byte) (b & ~(1 << bitMaskIndex));
             dataWatcher.b(DataWatcherRegistry.a.a(0), b);
             //
             //Player
             b = 0x00;
             //byte b = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40;
-            if(skin.parts.isCape()) b = (byte) (b | 0x01);
-            if(skin.parts.isJacket()) b = (byte) (b | 0x02);
-            if(skin.parts.isLeftSleeve()) b = (byte) (b | 0x04);
-            if(skin.parts.isRightSleeve()) b = (byte) (b | 0x08);
-            if(skin.parts.isLeftPants()) b = (byte) (b | 0x10);
-            if(skin.parts.isRightPants()) b = (byte) (b | 0x20);
-            if(skin.parts.isHat()) b = (byte) (b | 0x40);
+            if(getSkin().getParts().isCape()) b = (byte) (b | 0x01);
+            if(getSkin().getParts().isJacket()) b = (byte) (b | 0x02);
+            if(getSkin().getParts().isLeftSleeve()) b = (byte) (b | 0x04);
+            if(getSkin().getParts().isRightSleeve()) b = (byte) (b | 0x08);
+            if(getSkin().getParts().isLeftPants()) b = (byte) (b | 0x10);
+            if(getSkin().getParts().isRightPants()) b = (byte) (b | 0x20);
+            if(getSkin().getParts().isHat()) b = (byte) (b | 0x40);
             dataWatcher.b(DataWatcherRegistry.a.a(17), b);
             //
             PacketPlayOutEntityMetadata metadataPacket = new PacketPlayOutEntityMetadata(entityPlayer.ae(), dataWatcher, true);
@@ -1890,7 +1713,7 @@ public class NPC {
         NMSCraftPlayer.sendPacket(player, new PacketPlayOutNamedEntitySpawn(entityPlayer));
         shownOnTabList = true;
         updatePlayerRotation();
-        if(showOnTabList) return;
+        if(isShowOnTabList()) return;
         Bukkit.getScheduler().scheduleSyncDelayedTask(getNPCLib().getPlugin(), ()-> {
             if(!isCreated()) return;
             NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.e, entityPlayer)); //EnumPlayerInfoAction.REMOVE_PLAYER
@@ -1902,7 +1725,7 @@ public class NPC {
         if(!hiddenToPlayer) return;
         createPacket();
         hiddenToPlayer = false;
-        if(text.size() > 0) updateText();
+        if(getText().size() > 0) updateText();
         Bukkit.getScheduler().scheduleSyncDelayedTask(getNPCLib().getPlugin(), () -> {
             if(!isCreated()) return;
             update();
@@ -1920,50 +1743,43 @@ public class NPC {
         hiddenToPlayer = true;
     }
 
-    private NPC hideText(){
+    private void hideText(){
         Validate.notNull(player, "Failed to update NPC text. The NPC does not have the assigned player.");
         Validate.notNull(npcHologram, "Failed to update NPC text. The NPCHologram has not been created yet.");
         npcHologram.hide();
         hiddenText = true;
-        return this;
     }
 
-    private NPC showText(){
+    private void showText(){
         Validate.notNull(player, "Failed to update NPC text. The NPC does not have the assigned player.");
         Validate.notNull(npcHologram, "Failed to update NPC text. The NPCHologram has not been created yet.");
-        if(hiddenText) return this;
+        if(hiddenText) return;
         npcHologram.show();
         hiddenText = false;
-        return this;
     }
 
     /**
      * @since 2022.2
      * @param world
-     * @return
      */
-    protected NPC changeWorld(World world){
+    protected void changeWorld(World world){
         npcLib.getNPCPlayerManager(player).changeWorld(this, this.world, world);
         this.world = world;
-        return this;
     }
 
     /**
      *
      * @since 2022.1
      */
-    protected NPC addClickAction(@Nonnull NPC.Interact.ClickAction clickAction){
+    protected void addClickAction(@Nonnull NPC.Interact.ClickAction clickAction){
         this.clickActions.add(clickAction);
-        return this;
     }
 
     /**
      * @since 2022.2
-     * @return
      */
-    protected NPC clearMoveTask(){
+    protected void clearMoveTask(){
         this.moveTask = null;
-        return this;
     }
 
     /*
@@ -1994,7 +1810,7 @@ public class NPC {
      */
     public boolean isInRange(){
         if(!getWorld().getName().equals(player.getWorld().getName())) return false;
-        return getLocation().distance(player.getLocation()) < hideDistance;
+        return getLocation().distance(player.getLocation()) < getHideDistance();
     }
 
     /**
@@ -2057,7 +1873,7 @@ public class NPC {
      * @since 2021.1
      */
     protected HashMap<NPC.Slot, ItemStack> getEquipment(){
-        return slots;
+        return attributes.slots;
     }
 
     /**
@@ -2066,7 +1882,7 @@ public class NPC {
      * @since 2021.1
      */
     public ItemStack getEquipment(NPC.Slot npcSlot){
-        return slots.get(npcSlot);
+        return attributes.slots.get(npcSlot);
     }
 
     /**
@@ -2090,7 +1906,7 @@ public class NPC {
      * @return
      */
     public double getMoveSpeed() {
-        return moveSpeed;
+        return attributes.moveSpeed;
     }
 
     /**
@@ -2183,15 +1999,6 @@ public class NPC {
      * @return
      * @since 2021.1
      */
-    protected EntityPlayer getEntityPlayer() {
-        return entityPlayer;
-    }
-
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
     public NPCLib getNPCLib() {
         return npcLib;
     }
@@ -2208,10 +2015,20 @@ public class NPC {
     /**
      *
      * @return
+     * @since 2022.3
+     */
+    public String getSimpleCode() {
+        String code = "" + this.code;
+        return code.replaceFirst("" + plugin.getName().toLowerCase() + "\\.", "");
+    }
+
+    /**
+     *
+     * @return
      * @since 2021.1
      */
     public List<String> getText() {
-        return text;
+        return attributes.text;
     }
 
     /**
@@ -2220,7 +2037,7 @@ public class NPC {
      * @since 2021.1
      */
     public NPC.Skin getSkin() {
-        return skin;
+        return attributes.skin;
     }
 
     /**
@@ -2229,7 +2046,7 @@ public class NPC {
      * @since 2021.1
      */
     public boolean isCollidable() {
-        return collidable;
+        return attributes.collidable;
     }
 
     /**
@@ -2238,7 +2055,7 @@ public class NPC {
      * @since 2021.1
      */
     public Double getHideDistance() {
-        return hideDistance;
+        return attributes.hideDistance;
     }
 
     /**
@@ -2247,7 +2064,7 @@ public class NPC {
      * @since 2021.1
      */
     public Double getLineSpacing(){
-        return this.lineSpacing;
+        return attributes.lineSpacing;
     }
 
     /**
@@ -2256,7 +2073,7 @@ public class NPC {
      * @since 2022.1
      */
     public Vector getTextAlignment() {
-        return textAlignment;
+        return attributes.textAlignment;
     }
 
     /**
@@ -2265,7 +2082,7 @@ public class NPC {
      * @since 2022.1
      */
     public Long getInteractCooldown() {
-        return interactCooldown;
+        return attributes.interactCooldown;
     }
 
     /**
@@ -2274,7 +2091,7 @@ public class NPC {
      * @since 2021.1
      */
     public NPC.Color getGlowingColor() {
-        return glowingColor;
+        return attributes.glowingColor;
     }
 
     /**
@@ -2283,7 +2100,7 @@ public class NPC {
      * @since 2021.1
      */
     protected HashMap<NPC.Slot, ItemStack> getSlots() {
-        return slots;
+        return attributes.slots;
     }
 
     /**
@@ -2292,7 +2109,7 @@ public class NPC {
      * @since 2021.1
      */
     public boolean isShowOnTabList() {
-        return showOnTabList;
+        return attributes.showOnTabList;
     }
 
     /**
@@ -2301,7 +2118,7 @@ public class NPC {
      * @since 2021.1
      */
     public String getCustomTabListName() {
-        return customTabListName;
+        return attributes.customTabListName;
     }
 
     /**
@@ -2310,7 +2127,7 @@ public class NPC {
      * @since 2021.1
      */
     public boolean isGlowing() {
-        return glowing;
+        return attributes.glowing;
     }
 
     /**
@@ -2319,7 +2136,7 @@ public class NPC {
      * @since 2021.1
      */
     public FollowLookType getFollowLookType() {
-        return followLookType;
+        return attributes.followLookType;
     }
 
     /**
@@ -2328,7 +2145,7 @@ public class NPC {
      * @since 2021.2
      */
     public NPC.Pose getPose() {
-        return npcPose;
+        return attributes.pose;
     }
 
     /**
@@ -2346,11 +2163,11 @@ public class NPC {
      * @since 2022.1
      */
     public NPC.Hologram.Opacity getTextOpacity() {
-        return textOpacity;
+        return attributes.textOpacity;
     }
 
     public boolean isOnFire() {
-        return onFire;
+        return attributes.onFire;
     }
 
     /**
@@ -2359,7 +2176,7 @@ public class NPC {
      * @since 2021.1
      */
     private String getReplacedCustomName(){
-        return getReplacedCustomName(customTabListName, tabListID);
+        return getReplacedCustomName(attributes.getCustomTabListName(), tabListID);
     }
 
     /**
@@ -2385,7 +2202,23 @@ public class NPC {
      * @since 2022.1
      */
     public NPC.Attributes getAttributes() {
-        return new NPC.Attributes(this);
+        return attributes;
+    }
+
+    /**
+     * @since 2022.3
+     * @return
+     */
+    public EntityPlayer getEntity(){
+        return this.entityPlayer;
+    }
+
+    /**
+     * @since 2022.3
+     * @return
+     */
+    public Plugin getPlugin() {
+        return plugin;
     }
 
     /**
@@ -2410,6 +2243,11 @@ public class NPC {
      */
     protected HashMap<Integer, NPC.Hologram.Opacity> getLinesOpacity() {
         return linesOpacity;
+    }
+
+    @Deprecated
+    protected boolean isGlobal(){
+        return code.startsWith("global_");
     }
 
     /*
@@ -2621,7 +2459,7 @@ public class NPC {
 
     public static class Skin {
 
-        protected static final Skin DEFAULT = new Skin(
+        protected static final Skin STEVE = new Skin(
                 "ewogICJ0aW1lc3RhbXAiIDogMTYyMTcxNTMxMjI5MCwKICAicHJvZmlsZUlkIiA6ICJiNTM5NTkyMjMwY2I0MmE0OWY5YTRlYmYxNmRlOTYwYiIsCiAgInByb2ZpbGVOYW1lIiA6ICJtYXJpYW5hZmFnIiwKICAic2lnbmF0dXJlUmVxdWlyZWQiIDogdHJ1ZSwKICAidGV4dHVyZXMiIDogewogICAgIlNLSU4iIDogewogICAgICAidXJsIiA6ICJodHRwOi8vdGV4dHVyZXMubWluZWNyYWZ0Lm5ldC90ZXh0dXJlLzFhNGFmNzE4NDU1ZDRhYWI1MjhlN2E2MWY4NmZhMjVlNmEzNjlkMTc2OGRjYjEzZjdkZjMxOWE3MTNlYjgxMGIiCiAgICB9CiAgfQp9",
                 "otpbxDm9B+opW7jEzZF8BVDeZSqaqdF0dyLlnlyMh7Q5ysJFDL48/9J/IOHp8JqNm1oarmVdvxrroy9dlNI2Mz4BVuJM2pcCOJwk2h+aZ4dzNZGxst+MYNPSw+i4sMoYu7OV07UVHrQffolFF7MiaBUst1hFwM07IpTE6UtIQz4rqWisXe9Iz5+ooqX4wj0IB3dPntsh6u5nVlL8acWCBDAW4YqcPt2Y4CKK+KtskjzusjqGAdEO+4lRcW1S0ldo2RNtUHEzZADWQcADjg9KKiKq9QIpIpYURIoIAA+pDGb5Q8L5O6CGI+i1+FxqXbgdBvcm1EG0OPdw9WpSqAxGGeXSwlzjILvlvBzYbd6gnHFBhFO+X7iwRJYNd+qQakjUa6ZwR8NbkpbN3ABb9+6YqVkabaEmgfky3HdORE+bTp/AT6LHqEMQo0xdNkvF9gtFci7RWhFwuTLDvQ1esby1IhlgT+X32CPuVHuxEvPCjN7+lmRz2OyOZ4REo2tAIFUKakqu3nZ0NcF98b87wAdA9B9Qyd2H/rEtUToQhpBjP732Sov6TlJkb8echGYiLL5bu/Q7hum72y4+j2GNnuRiOJtJidPgDqrYMg81GfenfPyS6Ynw6KhdEhnwmJ1FJlJhYvXZyqZwLAV1c26DNYkrTMcFcv3VXmcd5/2Zn9FnZtw=",
                 "Steve");
@@ -2663,10 +2501,9 @@ public class NPC {
         /**
          * @since 2022.2
          * @param npc
-         * @return
          */
-        public NPC applyNPC(NPC npc){
-            return npc.setSkin(this);
+        public void applyNPC(NPC npc){
+            npc.setSkin(this);
         }
 
         public String getTexture() {
@@ -2704,13 +2541,13 @@ public class NPC {
         private static String[] getSkin(Player player){
             try{
                 EntityPlayer p = NMSCraftPlayer.getEntityPlayer(player);
-                GameProfile profile = p.fp();
+                GameProfile profile = NMSEntityPlayer.getGameProfile(p);
                 Property property = profile.getProperties().get("textures").iterator().next();
                 String texture = property.getValue();
                 String signature = property.getSignature();
                 return new String[]{texture, signature};
             }
-            catch (Exception e){ return NPC.Skin.getDefaultSkin().getData(); }
+            catch (Exception e){ return NPC.Skin.getSteveSkin().getData(); }
         }
 
         private static UUID getUUID(String name) {
@@ -2726,104 +2563,112 @@ public class NPC {
             } catch (Exception e) { return null; }
         }
 
-        public static Skin getDefaultSkin(){ return DEFAULT; }
+        public static Skin getSteveSkin(){ return STEVE; }
+
+        @Deprecated
+        public static Skin getDefaultSkin() { return getSteveSkin(); }
 
         public static Skin getPlayerSkin(Player player){ return new Skin(player); }
 
         public static Skin getPlayerSkin(String playerName){ return new Skin(playerName); }
 
         /**
+         * @since 2022.3
+         */
+        public enum Part{
+            CAPE,
+            JACKET,
+            LEFT_SLEEVE,
+            RIGHT_SLEEVE,
+            LEFT_PANTS,
+            RIGHT_PANTS,
+            HAT,
+        }
+
+        /**
          * @since 2022.2
          */
         public static class Parts{
 
-            private boolean cape;
-            private boolean jacket;
-            private boolean leftSleeve;
-            private boolean rightSleeve;
-            private boolean leftPants;
-            private boolean rightPants;
-            private boolean hat;
+            private HashMap<Part, Boolean> parts;
 
             protected Parts(){
+                parts = new HashMap<>();
                 enableAll();
             }
 
-            public void enableAll(){
-                this.cape = true;
-                this.jacket = true;
-                this.leftSleeve = true;
-                this.rightSleeve = true;
-                this.leftPants = true;
-                this.rightPants = true;
-                this.hat = true;
+            public void enableAll(){ Arrays.stream(Part.values()).forEach(x-> parts.put(x, true)); }
+
+            public void disableAll(){ Arrays.stream(Part.values()).forEach(x-> parts.put(x, false)); }
+
+            public List<Part> getVisibleParts(){
+                return Arrays.stream(Part.values()).filter(x-> isVisible(x)).collect(Collectors.toList());
             }
 
-            public void disableAll(){
-                this.cape = false;
-                this.jacket = false;
-                this.leftSleeve = false;
-                this.rightSleeve = false;
-                this.leftPants = false;
-                this.rightPants = false;
-                this.hat = false;
+            public List<Part> getInvisibleParts(){
+                return Arrays.stream(Part.values()).filter(x-> !isVisible(x)).collect(Collectors.toList());
             }
+
+            public void setVisible(Part part, boolean visible){ parts.put(part, visible); }
+
+            public boolean isVisible(Part part) { return parts.get(part); }
 
             public boolean isCape() {
-                return cape;
+                return isVisible(Part.CAPE);
             }
 
             public void setCape(boolean cape) {
-                this.cape = cape;
+                setVisible(Part.CAPE, cape);
             }
 
             public boolean isJacket() {
-                return jacket;
+                return isVisible(Part.JACKET);
             }
 
             public void setJacket(boolean jacket) {
-                this.jacket = jacket;
+                setVisible(Part.JACKET, jacket);
             }
 
             public boolean isLeftSleeve() {
-                return leftSleeve;
+                return parts.get(Part.LEFT_SLEEVE);
             }
 
             public void setLeftSleeve(boolean leftSleeve) {
-                this.leftSleeve = leftSleeve;
+                setVisible(Part.LEFT_SLEEVE, leftSleeve);
             }
 
             public boolean isRightSleeve() {
-                return rightSleeve;
+                return isVisible(Part.RIGHT_SLEEVE);
             }
 
             public void setRightSleeve(boolean rightSleeve) {
-                this.rightSleeve = rightSleeve;
+                setVisible(Part.RIGHT_SLEEVE, rightSleeve);
             }
 
             public boolean isLeftPants() {
-                return leftPants;
+                return isVisible(Part.LEFT_PANTS);
             }
 
             public void setLeftPants(boolean leftPants) {
-                this.leftPants = leftPants;
+                setVisible(Part.LEFT_PANTS, leftPants);
             }
 
             public boolean isRightPants() {
-                return rightPants;
+                return isVisible(Part.RIGHT_PANTS);
             }
 
             public void setRightPants(boolean rightPants) {
-                this.rightPants = rightPants;
+                setVisible(Part.RIGHT_PANTS, rightPants);
             }
 
             public boolean isHat() {
-                return hat;
+                return isVisible(Part.HAT);
             }
 
             public void setHat(boolean hat) {
-                this.hat = hat;
+                setVisible(Part.HAT, hat);
             }
+
         }
 
     }
@@ -3242,7 +3087,7 @@ public class NPC {
                     if(jumpingBlock) npc.getPlayer().sendMessage("§c§lJUMPING BLOCK");
                     if(falling) npc.getPlayer().sendMessage("§c§lFALLING");
                 }
-                if(lookToEnd){
+                if(lookToEnd && npc.getLocation().getWorld().equals(end.getWorld())){
                     npc.lookAt(end);
                     npc.updatePlayerRotation();
                 }
@@ -4131,7 +3976,9 @@ public class NPC {
                 0.27,
                 new Vector(0, 1.75, 0),
                 NPC.Pose.STANDING,
-                NPC.Hologram.Opacity.LOWEST
+                NPC.Hologram.Opacity.LOWEST,
+                false,
+                Move.Speed.NORMAL.doubleValue()
         );
 
         protected static final Double VARIABLE_MIN_LINE_SPACING = 0.27;
@@ -4152,24 +3999,28 @@ public class NPC {
         private Long interactCooldown;
         private Double lineSpacing;
         private Vector textAlignment;
-        private NPC.Pose npcPose;
+        private NPC.Pose pose;
         private NPC.Hologram.Opacity textOpacity;
+        private boolean onFire;
+        private double moveSpeed;
 
         private Attributes(NPC.Skin skin,
-                              List<String> text,
-                              HashMap<NPC.Slot, ItemStack> slots,
-                              boolean collidable,
-                              Double hideDistance,
-                              boolean glowing,
-                              NPC.Color glowingColor,
-                              NPC.FollowLookType followLookType,
-                              String customTabListName,
-                              boolean showOnTabList,
-                              Long interactCooldown,
-                              Double lineSpacing,
-                              Vector textAlignment,
-                              NPC.Pose npcPose,
-                              NPC.Hologram.Opacity textOpacity
+                           List<String> text,
+                           HashMap<NPC.Slot, ItemStack> slots,
+                           boolean collidable,
+                           Double hideDistance,
+                           boolean glowing,
+                           NPC.Color glowingColor,
+                           NPC.FollowLookType followLookType,
+                           String customTabListName,
+                           boolean showOnTabList,
+                           Long interactCooldown,
+                           Double lineSpacing,
+                           Vector textAlignment,
+                           NPC.Pose npcPose,
+                           NPC.Hologram.Opacity textOpacity,
+                           boolean onFire,
+                           Double moveSpeed
         ) {
             this.skin = skin;
             this.text = text;
@@ -4184,12 +4035,14 @@ public class NPC {
             this.interactCooldown = interactCooldown;
             this.lineSpacing = lineSpacing;
             this.textAlignment = textAlignment;
-            this.npcPose = npcPose;
+            this.pose = npcPose;
             this.textOpacity = textOpacity;
-            Arrays.stream(NPC.Slot.values()).forEach(x-> slots.put(x, new ItemStack(Material.AIR)));
+            this.onFire = onFire;
+            this.moveSpeed = moveSpeed;
+            Arrays.stream(NPC.Slot.values()).filter(x-> !slots.containsKey(x)).forEach(x-> slots.put(x, new ItemStack(Material.AIR)));
         }
 
-        public Attributes(){
+        protected Attributes(){
             this.collidable = DEFAULT.isCollidable();
             this.text = DEFAULT.getText();
             this.hideDistance = DEFAULT.getHideDistance();
@@ -4200,29 +4053,13 @@ public class NPC {
             this.slots = (HashMap<NPC.Slot, ItemStack>) DEFAULT.getSlots().clone();
             this.customTabListName = DEFAULT.getCustomTabListName();
             this.showOnTabList = DEFAULT.isShowOnTabList();
-            this.npcPose = DEFAULT.getPose();
+            this.pose = DEFAULT.getPose();
             this.lineSpacing = DEFAULT.getLineSpacing();
             this.textAlignment = DEFAULT.getTextAlignment().clone();
             this.interactCooldown = DEFAULT.getInteractCooldown();
             this.textOpacity = DEFAULT.getTextOpacity();
-        }
-
-        public Attributes(@Nonnull NPC npc){
-            Validate.notNull(npc, "Cannot create NPC.Attributes from a null NPC. Instead use new NPC.Attributes();");
-            this.collidable = npc.isCollidable();
-            this.text = npc.getText();
-            this.hideDistance = npc.getHideDistance();
-            this.glowing = npc.isGlowing();
-            this.skin = npc.getSkin();
-            this.glowingColor = npc.getGlowingColor();
-            this.followLookType = npc.getFollowLookType();
-            this.slots = (HashMap<NPC.Slot, ItemStack>) npc.getSlots().clone();
-            this.showOnTabList = npc.isShowOnTabList();
-            this.npcPose = npc.getPose();
-            this.lineSpacing = npc.getLineSpacing();
-            this.textAlignment = npc.getTextAlignment().clone();
-            this.interactCooldown = npc.getInteractCooldown();
-            this.textOpacity = npc.getTextOpacity();
+            this.onFire = DEFAULT.isOnFire();
+            this.moveSpeed = DEFAULT.getMoveSpeed();
         }
 
         public void applyNPC(@Nonnull NPC npc, boolean forceUpdate){
@@ -4241,11 +4078,13 @@ public class NPC {
             npc.setSlots((HashMap<NPC.Slot, ItemStack>) this.slots.clone());
             npc.setCustomTabListName(this.customTabListName);
             npc.setShowOnTabList(this.showOnTabList);
-            npc.setPose(this.npcPose);
+            npc.setPose(this.pose);
             npc.setLineSpacing(this.lineSpacing);
             npc.setTextAlignment(this.textAlignment.clone());
             npc.setInteractCooldown(this.interactCooldown);
             npc.setTextOpacity(this.textOpacity);
+            npc.setMoveSpeed(this.moveSpeed);
+            npc.setOnFire(this.onFire);
         }
 
         public void applyNPC(@Nonnull Collection<NPC> npc){
@@ -4255,29 +4094,6 @@ public class NPC {
         public void applyNPC(@Nonnull Collection<NPC> npc, boolean forceUpdate){
             Validate.notNull(npc, "Cannot apply NPC.Attributes to a null NPC.");
             npc.forEach(x-> applyNPC(x, forceUpdate));
-        }
-
-        public boolean equals(@Nonnull NPC npc){
-            Validate.notNull(npc, "Cannot verify equals to a null NPC.");
-            return equals(npc.getAttributes());
-        }
-
-        public boolean equals(@Nonnull NPC.Attributes npc){
-            Validate.notNull(npc, "Cannot verify equals to a null NPC.Attributes.");
-            return npc.isCollidable() == isCollidable() &&
-                    npc.getText().equals(getText()) &&
-                    npc.getHideDistance().equals(getHideDistance()) &&
-                    npc.isGlowing() == isGlowing() &&
-                    npc.getGlowingColor().equals(getGlowingColor()) &&
-                    npc.getFollowLookType().equals(getFollowLookType()) &&
-                    npc.getSlots().equals(getSlots()) &&
-                    npc.getCustomTabListName().equals(getCustomTabListName()) &&
-                    npc.isShowOnTabList() == isShowOnTabList() &&
-                    npc.getPose().equals(getPose()) &&
-                    npc.getLineSpacing().equals(getLineSpacing()) &&
-                    npc.getTextAlignment().equals(getTextAlignment()) &&
-                    npc.getTextOpacity().equals(getTextOpacity()) &&
-                    npc.getInteractCooldown().equals(getInteractCooldown());
         }
 
         public static Attributes getDefault(){ return DEFAULT; }
@@ -4295,7 +4111,7 @@ public class NPC {
             return DEFAULT.getSkin();
         }
 
-        public void setSkin(@Nullable NPC.Skin skin) {
+        protected void setSkin(@Nullable NPC.Skin skin) {
             if(skin == null) skin = NPC.Skin.getDefaultSkin();
             this.skin = skin;
         }
@@ -4312,7 +4128,7 @@ public class NPC {
             return DEFAULT.getText();
         }
 
-        public void setText(@Nullable List<String> text) {
+        protected void setText(@Nullable List<String> text) {
             if(text == null) text = new ArrayList<>();
             this.text = text;
         }
@@ -4333,7 +4149,7 @@ public class NPC {
             return DEFAULT.getHelmet();
         }
 
-        public void setHelmet(@Nullable ItemStack itemStack){
+        protected void setHelmet(@Nullable ItemStack itemStack){
             setItem(NPC.Slot.HELMET, itemStack);
         }
 
@@ -4349,7 +4165,7 @@ public class NPC {
             return DEFAULT.getChestPlate();
         }
 
-        public void setChestPlate(@Nullable ItemStack itemStack){
+        protected void setChestPlate(@Nullable ItemStack itemStack){
             setItem(NPC.Slot.CHESTPLATE, itemStack);
         }
 
@@ -4365,7 +4181,7 @@ public class NPC {
             return DEFAULT.getLeggings();
         }
 
-        public void setLeggings(@Nullable ItemStack itemStack){
+        protected void setLeggings(@Nullable ItemStack itemStack){
             setItem(NPC.Slot.LEGGINGS, itemStack);
         }
 
@@ -4381,7 +4197,7 @@ public class NPC {
             return DEFAULT.getBoots();
         }
 
-        public void setBoots(@Nullable ItemStack itemStack){
+        protected void setBoots(@Nullable ItemStack itemStack){
             setItem(NPC.Slot.BOOTS, itemStack);
         }
 
@@ -4389,7 +4205,7 @@ public class NPC {
             DEFAULT.setBoots(itemStack);
         }
 
-        public void setItem(@Nonnull NPC.Slot slot, @Nullable ItemStack itemStack){
+        protected void setItem(@Nonnull NPC.Slot slot, @Nullable ItemStack itemStack){
             Validate.notNull(slot, "Failed to set item, NPCSlot cannot be null");
             if(itemStack == null) itemStack = new ItemStack(Material.AIR);
             slots.put(slot, itemStack);
@@ -4426,7 +4242,7 @@ public class NPC {
             return DEFAULT.isCollidable();
         }
 
-        public void setCollidable(boolean collidable) {
+        protected void setCollidable(boolean collidable) {
             this.collidable = collidable;
         }
 
@@ -4447,11 +4263,11 @@ public class NPC {
          * to be more efficient. And when the player approach, the NPC will be unhidden.
          *
          * @param hideDistance the distance in blocks
-         * @see dev.sergiferry.playernpc.api.NPC.Attributes#getHideDistance()
-         * @see dev.sergiferry.playernpc.api.NPC.Attributes#setDefaultHideDistance(double)
-         * @see dev.sergiferry.playernpc.api.NPC.Attributes#getDefaultHideDistance()
+         * @see NPC.Attributes#getHideDistance()
+         * @see NPC.Attributes#setDefaultHideDistance(double)
+         * @see NPC.Attributes#getDefaultHideDistance()
          */
-        public void setHideDistance(double hideDistance) {
+        protected void setHideDistance(double hideDistance) {
             Validate.isTrue(hideDistance > 0.00, "The hide distance cannot be negative or 0");
             this.hideDistance = hideDistance;
         }
@@ -4461,9 +4277,9 @@ public class NPC {
          * to be more efficient. And when the player approach, the NPC will be unhidden.
          *
          * @param hideDistance the distance in blocks
-         * @see dev.sergiferry.playernpc.api.NPC.Attributes#getHideDistance()
-         * @see dev.sergiferry.playernpc.api.NPC.Attributes#setHideDistance(double)
-         * @see dev.sergiferry.playernpc.api.NPC.Attributes#getDefaultHideDistance()
+         * @see NPC.Attributes#getHideDistance()
+         * @see NPC.Attributes#setHideDistance(double)
+         * @see NPC.Attributes#getDefaultHideDistance()
          */
         public static void setDefaultHideDistance(double hideDistance){
             DEFAULT.setHideDistance(hideDistance);
@@ -4477,7 +4293,7 @@ public class NPC {
             return DEFAULT.isGlowing();
         }
 
-        public void setGlowing(boolean glowing) {
+        protected void setGlowing(boolean glowing) {
             this.glowing = glowing;
         }
 
@@ -4493,10 +4309,15 @@ public class NPC {
             return DEFAULT.getGlowingColor();
         }
 
-        public void setGlowingColor(@Nullable ChatColor color) {
+        protected void setGlowingColor(@Nullable ChatColor color) {
             if(color == null) color = ChatColor.WHITE;
             Validate.isTrue(color.isColor(), "Error setting glow color. It's not a color.");
-            this.glowingColor = NPC.Color.getColor(color);
+            setGlowingColor(NPC.Color.getColor(color));
+        }
+
+        protected void setGlowingColor(@Nullable NPC.Color color){
+            if(color == null) color = Color.WHITE;
+            this.glowingColor = color;
         }
 
         public static void setDefaultGlowingColor(@Nullable ChatColor color){
@@ -4511,7 +4332,7 @@ public class NPC {
             return DEFAULT.getFollowLookType();
         }
 
-        public void setFollowLookType(@Nullable NPC.FollowLookType followLookType) {
+        protected void setFollowLookType(@Nullable NPC.FollowLookType followLookType) {
             if(followLookType == null) followLookType = NPC.FollowLookType.NONE;
             this.followLookType = followLookType;
         }
@@ -4528,14 +4349,14 @@ public class NPC {
             return DEFAULT.getCustomTabListName();
         }
 
-        public void setCustomTabListName(@Nonnull String customTabListName){
-            if(customTabListName == null) customTabListName = "§8[NPC] {uuid}";
-            Validate.isTrue(customTabListName.contains("{uuid}"), "Custom tab list name attribute must have {uuid} placeholder.");
+        protected void setCustomTabListName(@Nonnull String customTabListName){
+            if(customTabListName == null) customTabListName = DEFAULT.getCustomTabListName();
             Validate.isTrue(customTabListName.length() <= 16, "Error setting custom tab list name. Name must be 16 or less characters.");
             this.customTabListName = customTabListName;
         }
 
         public static void setDefaultCustomTabListName(@Nonnull String customTabListName){
+            Validate.isTrue(customTabListName.contains("{uuid}"), "Custom tab list name attribute must have {uuid} placeholder.");
             DEFAULT.setCustomTabListName(customTabListName);
         }
 
@@ -4547,7 +4368,7 @@ public class NPC {
             return DEFAULT.isShowOnTabList();
         }
 
-        public void setShowOnTabList(boolean showOnTabList) {
+        protected void setShowOnTabList(boolean showOnTabList) {
             this.showOnTabList = showOnTabList;
         }
 
@@ -4563,7 +4384,7 @@ public class NPC {
             return DEFAULT.getInteractCooldown();
         }
 
-        public void setInteractCooldown(long milliseconds) {
+        protected void setInteractCooldown(long milliseconds) {
             Validate.isTrue(milliseconds >= 0, "Error setting interact cooldown, cannot be negative.");
             this.interactCooldown = milliseconds;
         }
@@ -4580,7 +4401,7 @@ public class NPC {
             return DEFAULT.getLineSpacing();
         }
 
-        public void setLineSpacing(double lineSpacing) {
+        protected void setLineSpacing(double lineSpacing) {
             if(lineSpacing < NPC.Attributes.VARIABLE_MIN_LINE_SPACING) lineSpacing = NPC.Attributes.VARIABLE_MIN_LINE_SPACING;
             else if(lineSpacing > NPC.Attributes.VARIABLE_MAX_LINE_SPACING) lineSpacing = NPC.Attributes.VARIABLE_MAX_LINE_SPACING;
             this.lineSpacing = lineSpacing;
@@ -4598,8 +4419,8 @@ public class NPC {
             return DEFAULT.getTextAlignment();
         }
 
-        public void setTextAlignment(@Nonnull Vector vector) {
-            Validate.notNull(vector, "Failed to set text alignment. Vector cannot be null.");
+        protected void setTextAlignment(@Nonnull Vector vector) {
+            if(vector == null) vector = DEFAULT.getTextAlignment();
             if(vector.getX() > NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ) vector.setX(dev.sergiferry.playernpc.api.NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ);
             else if(vector.getX() < -NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ) vector.setX(-dev.sergiferry.playernpc.api.NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_XZ);
             if(vector.getY() > NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_Y) vector.setY(dev.sergiferry.playernpc.api.NPC.Attributes.VARIABLE_MAX_TEXT_ALIGNMENT_Y);
@@ -4614,16 +4435,16 @@ public class NPC {
         }
 
         public NPC.Pose getPose() {
-            return npcPose;
+            return pose;
         }
 
         public static NPC.Pose getDefaultPose(){
             return DEFAULT.getPose();
         }
 
-        public void setPose(@Nullable NPC.Pose npcPose) {
-            if(npcPose == null) npcPose = NPC.Pose.STANDING;
-            this.npcPose = npcPose;
+        protected void setPose(@Nullable NPC.Pose pose) {
+            if(pose == null) pose = NPC.Pose.STANDING;
+            this.pose = pose;
         }
 
         public static void setDefaultPose(@Nullable NPC.Pose npcPose){
@@ -4642,9 +4463,43 @@ public class NPC {
             DEFAULT.setTextOpacity(textOpacity);
         }
 
-        public void setTextOpacity(@Nullable NPC.Hologram.Opacity textOpacity) {
+        protected void setTextOpacity(@Nullable NPC.Hologram.Opacity textOpacity) {
             if(textOpacity == null) textOpacity = NPC.Hologram.Opacity.LOWEST;
             this.textOpacity = textOpacity;
+        }
+
+        public boolean isOnFire() {
+            return onFire;
+        }
+
+        public static boolean isDefaultOnFire(){
+            return DEFAULT.isOnFire();
+        }
+
+        protected void setOnFire(boolean onFire) {
+            this.onFire = onFire;
+        }
+
+        public static void setDefaultOnFire(boolean onFire){
+            DEFAULT.setOnFire(onFire);
+        }
+
+        public double getMoveSpeed() {
+            return moveSpeed;
+        }
+
+        public static Double getDefaultMoveSpeed(){
+            return DEFAULT.getMoveSpeed();
+        }
+
+        protected void setMoveSpeed(double moveSpeed) {
+            if(moveSpeed <= 0.00) moveSpeed = 0.1;
+            this.moveSpeed = moveSpeed;
+        }
+
+        protected void setMoveSpeed(@Nullable Move.Speed moveSpeed){
+            if(moveSpeed == null) moveSpeed = Move.Speed.NORMAL;
+            setMoveSpeed(moveSpeed.doubleValue());
         }
     }
 
