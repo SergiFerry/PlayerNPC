@@ -40,6 +40,7 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.type.Slab;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.Event;
@@ -50,9 +51,11 @@ import org.bukkit.util.Vector;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URL;
 import java.util.*;
+import java.util.function.*;
 import java.util.stream.Collectors;
 
 /**
@@ -63,548 +66,122 @@ import java.util.stream.Collectors;
  * @since 2021.1
  * @author  SergiFerry
  */
-public class NPC {
+public abstract class NPC {
 
     private final NPCLib npcLib;
     private final Plugin plugin;
     private final String code;
-    private final Player player;
+    private final HashMap<String, String> customData;
     private World world;
     private Double x, y, z;
     private Float yaw, pitch;
-    private EntityPlayer entityPlayer;
-    private final UUID tabListID;
-    private NPC.Hologram npcHologram;
-    private boolean canSee;
-    private boolean hiddenText;
-    private boolean hiddenToPlayer;
-    private boolean shownOnTabList;
     private List<NPC.Interact.ClickAction> clickActions;
-    private HashMap<Integer, NPC.Hologram.Opacity> linesOpacity;
     private NPC.Move.Task moveTask;
     private NPC.Move.Behaviour moveBehaviour;
 
     // NPC.Attributes
     private NPC.Attributes attributes;
 
-    /**
-     * This constructor can only be invoked by using {@link NPCLib#generateNPC(Player, Plugin, String, Location)}
-     * <p><strong>This only generates the NPC instance, you must {@link NPC#create()} and {@link NPC#show()} it after.</strong></p>
-     *
-     * @param npcLib always is {@link NPCLib#getInstance()}
-     * @param player the {@link Player} that will see the NPC
-     * @param code an {@link String} that will let find this {@link NPC} instance at {@link NPCLib#getNPC(Player, Plugin, String)}
-     * @param world the {@link World} that the NPC will be
-     * @param x X coordinate
-     * @param y Y coordinate
-     * @param z Z coordinate
-     * @param yaw Yaw horizontal
-     * @param pitch Pitch vertical
-     *
-     * @since 2021.1
-     *
-     * @see NPCLib#getInstance()
-     * @see NPCLib#generateNPC(Player, Plugin, String, Location)
-     * @see NPC#create()
-     * @see NPC#show()
-     *
-     */
-    protected NPC(@Nonnull NPCLib npcLib, @Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull World world, double x, double y, double z, float yaw, float pitch){
+    protected NPC(@Nonnull NPCLib npcLib, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull World world, double x, double y, double z, float yaw, float pitch){
         Validate.notNull(npcLib, "Cannot generate NPC instance, NPCLib cannot be null.");
         Validate.notNull(plugin, "Cannot generate NPC instance, Plugin cannot be null.");
         Validate.notNull(code, "Cannot generate NPC instance, code cannot be null.");
-        Validate.notNull(player, "Cannot generate NPC instance, Player cannot be null.");
         Validate.notNull(world, "Cannot generate NPC instance, World cannot be null.");
         this.npcLib = npcLib;
         this.plugin = plugin;
         this.code = code;
-        this.player = player;
         this.world = world;
-        this.canSee = false;
         this.x = x;
         this.y = y;
         this.z = z;
         this.yaw = yaw;
         this.pitch = pitch;
-        this.npcHologram = null;
-        this.shownOnTabList = false;
-        this.hiddenToPlayer = true;
-        this.hiddenText = false;
-        this.tabListID = UUID.randomUUID();
         this.clickActions = new ArrayList<>();
-        this.linesOpacity = new HashMap<>();
         this.moveTask = null;
         this.moveBehaviour = new NPC.Move.Behaviour(this);
+        this.customData = new HashMap<>();
 
         //NPC Attributes
         this.attributes = new NPC.Attributes();
-
-        attributes.hideDistance = 0.0;
-        npcLib.getNPCPlayerManager(player).set(code, this);
-        Bukkit.getScheduler().scheduleSyncDelayedTask(npcLib.getPlugin(), ()-> {
-            this.attributes.hideDistance = NPC.Attributes.getDefault().getHideDistance();
-        },1);
     }
 
-    /**
-     * This constructor can only be invoked by using {@link NPCLib#generateNPC(Player, Plugin, String, Location)}
-     * <p><strong>This only generates the NPC instance, you must {@link NPC#create()} and {@link NPC#show()} it after.</strong></p>
-     *
-     * @param npcLib always is {@link NPCLib#getInstance()}
-     * @param player the {@link Player} that will see the NPC
-     * @param code an {@link String} that will let find this {@link NPC} instance at {@link NPCLib#getNPC(Player, String)}
-     * @param location the {@link Location} that the NPC will spawn
-     *
-     * @since 2021.1
-     *
-     * @see NPCLib#getInstance()
-     * @see NPCLib#generateNPC(Player, Plugin, String, Location)
-     * @see NPC#create()
-     * @see NPC#show()
-     */
-    protected NPC(@Nonnull NPCLib npcLib, @Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull Location location){
-        this(npcLib, player, plugin, code, location.getWorld(), location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch());
-    }
+    protected abstract void update();
 
-    /*
-                    Public access methods
-    */
+    protected abstract void forceUpdate();
 
-    /**
-     * Creates the {@link NPC#entityPlayer} of the {@link NPC}, but it doesn't
-     * show it to the player until {@link NPC#show()}.
-     *
-     * @throws IllegalArgumentException if {@link NPC#getSkin()} equals {@code null}
-     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code true}
-     *          because it means that the {@link NPC#entityPlayer} is created yet.
-     *
-     * @since 2021.1
-     *
-     * @see     NPC#show()
-     */
-    public void create(){
-        Validate.notNull(attributes.skin, "Failed to create the NPC. The NPC.Skin has not been configured.");
-        Validate.isTrue(entityPlayer == null, "Failed to create the NPC. This NPC has already been created before.");
-        MinecraftServer server = NMSCraftServer.getMinecraftServer();
-        WorldServer worldServer = NMSCraftWorld.getWorldServer(world);
-        UUID uuid = UUID.randomUUID();
-        GameProfile gameProfile = new GameProfile(uuid, getReplacedCustomName());
-        this.entityPlayer = new EntityPlayer(server, worldServer, gameProfile);
-        entityPlayer.a(x, y, z, yaw, pitch);                                                                            //setLocation
-        this.npcHologram = new NPC.Hologram(this);
-        updateSkin();
-        updatePose();
-        updateScoreboard();
-    }
+    protected abstract void updateText();
 
-    /**
-     * Updates the attributes of the {@link NPC}.
-     * Some changes will need {@link NPC#forceUpdate()}
-     *
-     * @since 2021.1
-     *
-     * @see NPC#update()
-     * @see NPC#forceUpdate()
-     */
-    public void update(){
-        Validate.notNull(player, "Failed to update the NPC. The NPC does not have the assigned player.");
-        Validate.notNull(entityPlayer, "Failed to update the NPC. The NPC has not been created yet.");
-        if(!canSee) return;
-        if(!hiddenToPlayer && !isInRange()){
-            hideToPlayer();
-            return;
-        }
-        if(hiddenToPlayer && isInRange() && isInView()){
-            showToPlayer();
-            return;
-        }
-        updatePose();
-        updateLook();
-        updateSkin();
-        updatePlayerRotation();
-        updateEquipment();
-        updateMetadata();
-    }
+    protected abstract void forceUpdateText();
 
-    /**
-     * Re-creates the {@link NPC#entityPlayer}, and updates all the attributes.
-     * This is useful after doing some big changes to the NPC, like setting the skin, glowing color, or collision rule.
-     * Methods that require this force update will be documented. Otherwise use {@link NPC#update()}
-     *
-     * @throws IllegalArgumentException if {@link NPC#player} equals {@code null}
-     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
-     * @since 2021.1
-     *
-     * @see NPC#create()
-     * @see NPC#isCreated()
-     * @see NPC#update()
-     */
-    public void forceUpdate(){
-        Validate.notNull(player, "Failed to force update the NPC. The NPC does not have the assigned player.");
-        Validate.notNull(entityPlayer, "Failed to force update the NPC. The NPC has not been created yet.");
-        reCreate();
-        update();
-        forceUpdateText();
-    }
+    protected abstract void destroy();
 
-    /**
-     * Teleports {@link NPC#entityPlayer} to the specified coordinate.
-     * This method automatically updates to the Player client.
-     *
-     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
-     * @param x X coordinate
-     * @param y Y coordinate
-     * @param z Z coordinate
-     * @param yaw Yaw horizontal
-     * @param pitch Pitch vertical
-     *
-     * @since 2021.1
-     * @see NPC#isCreated()
-     * @see NPC#teleport(Entity)
-     * @see NPC#teleport(Location)
-     * @see NPC#teleport(double, double, double)
-     */
-    public void teleport(World world, double x, double y, double z, float yaw, float pitch){
-        Validate.notNull(entityPlayer, "Failed to move the NPC. The NPC has not been created yet.");
-        NPC.Events.Teleport npcTeleportEvent = new NPC.Events.Teleport(this, new Location(world, x, y, z, yaw, pitch));
-        if(npcTeleportEvent.isCancelled()) return;
-        this.x = x;
-        this.y = y;
-        this.z = z;
-        this.yaw = yaw;
-        this.pitch = pitch;
-        if(!this.world.equals(world)) changeWorld(world);
-        boolean show = canSee;
-        if(npcHologram != null) npcHologram.hide();
-        reCreate();
-        if(npcHologram != null) forceUpdateText();
-        if(show) show();
-        else if(npcHologram != null) hideText();
-    }
+    protected abstract void teleport(World world, double x, double y, double z, float yaw, float pitch);
 
-    /**
-     * Teleports {@link NPC#entityPlayer} to {@link Entity#getLocation()}
-     * This method automatically updates to the Player client.
-     *
-     * @param entity The entity that will teleport to.
-     * @throws IllegalArgumentException if {@link Entity#getWorld()} is different of {@link NPC#getWorld()}
-     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
-     *
-     * @since 2021.1
-     * @see NPC#isCreated()
-     * @see NPC#teleport(Location)
-     * @see NPC#teleport(double, double, double)
-     * @see NPC#teleport(double, double, double, float, float)
-     */
     public void teleport(@Nonnull Entity entity){
         Validate.notNull(entity, "Entity must be not null.");
         teleport(entity.getLocation());
     }
 
-    /**
-     * Teleports {@link NPC#entityPlayer} to the specified {@link Location}.
-     * This method automatically updates to the Player client.
-     *
-     * @param location The location that will teleport to.
-     * @throws  IllegalArgumentException if location is {@code null}
-     * @throws  IllegalArgumentException if location's {@link Location#getWorld()} is not the same as {@link NPC#world}
-     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
-     *
-     * @since 2021.1
-     * @see     NPC#isCreated()
-     */
     public void teleport(@Nonnull Location location){
         Validate.notNull(location, "Location must be not null.");
         teleport(location.getWorld(), location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch());
     }
 
-    /**
-     * Teleports {@link NPC#entityPlayer} to the specified coordinate.
-     * This method automatically updates to the Player client.
-     *
-     * @param x X coordinate
-     * @param y Y coordinate
-     * @param z Z coordinate
-     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
-     *
-     * @since 2021.1
-     * @see     NPC#isCreated()
-     */
     public void teleport(double x, double y, double z){
         teleport(world, x, y, z);
     }
 
-    /**
-     * Teleports {@link NPC#entityPlayer} to the specified coordinate.
-     * This method automatically updates to the Player client.
-     *
-     * @param world the world where will be teleported
-     * @param x X coordinate
-     * @param y Y coordinate
-     * @param z Z coordinate
-     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
-     *
-     * @since 2022.2
-     * @see NPC#isCreated()
-     */
     public void teleport(World world, double x, double y, double z){
         teleport(world, x, y, z, yaw, pitch);
     }
 
-    /**
-     * Teleports {@link NPC#entityPlayer} to the specified coordinate.
-     * This method automatically updates to the Player client.
-     *
-     * @param x X coordinate
-     * @param y Y coordinate
-     * @param z Z coordinate
-     * @param yaw Yaw horizontal
-     * @param pitch Pitch vertical
-     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
-     *
-     * @since 2022.2
-     * @see NPC#isCreated()
-     */
-    public void teleport(double x, double y, double z, float yaw, float pitch){
-        teleport(this.world, x, y, z, yaw, pitch);
-    }
+    public void teleport(double x, double y, double z, float yaw, float pitch){ teleport(this.world, x, y, z, yaw, pitch); }
 
-    /**
-     * Sets the equipment of the {@link NPC} with the {@link ItemStack} at the specified {@link Slot}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param slot The slot that the item will be equipped.
-     * @param itemStack The itemStack that will be equipped.
-     * @throws IllegalArgumentException if {@code slot} equals {@code null}
-     *
-     * @since 2021.1
-     * @see NPC#update()
-     */
     public void setItem(@Nonnull NPC.Slot slot, @Nullable ItemStack itemStack){
         Validate.notNull(slot, "Failed to set item, NPC.Slot cannot be null");
         if(itemStack == null) itemStack = new ItemStack(Material.AIR);
         attributes.slots.put(slot, itemStack);
     }
 
-    /**
-     * Sets the equipment of the {@link NPC} with the {@link ItemStack} at the specified {@link Slot}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param itemStack The itemStack that will be equipped.
-     * @see NPC#update()
-     * @since 2022.1
-     */
     public void setHelmet(@Nullable ItemStack itemStack){
         setItem(NPC.Slot.HELMET, itemStack);
     }
 
-    /**
-     * Sets the equipment of the {@link NPC} with the {@link ItemStack} at the specified {@link Slot}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param itemStack The itemStack that will be equipped.
-     * @see NPC#update()
-     * @since 2022.1
-     */
     public void setChestPlate(@Nullable ItemStack itemStack){
         setItem(Slot.CHESTPLATE, itemStack);
     }
 
-    /**
-     * Sets the equipment of the {@link NPC} with the {@link ItemStack} at the specified {@link Slot}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param itemStack The itemStack that will be equipped.
-     * @see NPC#update()
-     * @since 2022.1
-     */
     public void setLeggings(@Nullable ItemStack itemStack){
         setItem(Slot.LEGGINGS, itemStack);
     }
 
-    /**
-     * Sets the equipment of the {@link NPC} with the {@link ItemStack} at the specified {@link Slot}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param itemStack The itemStack that will be equipped.
-     * @see NPC#update()
-     * @since 2022.1
-     */
     public void setBoots(@Nullable ItemStack itemStack){
         setItem(Slot.BOOTS, itemStack);
     }
 
-    /**
-     * Sets the equipment of the {@link NPC} with the {@link ItemStack} at the specified {@link Slot}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param itemStack The itemStack that will be equipped.
-     * @see NPC#update()
-     * @since 2022.1
-     */
     public void setItemInRightHand(@Nullable ItemStack itemStack){
         setItem(NPC.Slot.MAINHAND, itemStack);
     }
 
-    /**
-     * Sets the equipment of the {@link NPC} with the {@link ItemStack} at the specified {@link Slot}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param itemStack The itemStack that will be equipped.
-     * @see NPC#update()
-     * @since 2022.1
-     */
     public void setItemInLeftHand(@Nullable ItemStack itemStack){
         setItem(NPC.Slot.OFFHAND, itemStack);
     }
 
-    /**
-     * Clears the equipment of the {@link NPC} at the specified {@link Slot}
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param slot The slot that will be cleared.
-     * @throws IllegalArgumentException if {@code slot} equals {@code null}
-     *
-     * @since 2021.1
-     * @see NPC#update()
-     */
     public void clearEquipment(@Nonnull NPC.Slot slot){
         setItem(slot, null);
     }
 
-    /**
-     * Clears the equipment of the {@link NPC}
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @since 2021.1
-     *
-     * @see NPC#update()
-     */
     public void clearEquipment(){
         Arrays.stream(NPC.Slot.values()).forEach(x-> clearEquipment(x));
     }
 
-    /**
-     * Updates the {@link NPC#npcHologram}. If the amount of lines is different at the previous text, use {@link NPC#forceUpdateText()}
-     *
-     * @since 2021.1
-     *
-     * @see NPC#forceUpdateText()
-     */
-    public void updateText(){
-        if(npcHologram == null) return;
-        npcHologram.update();
-    }
-
-    /**
-     * Re-creates the {@link NPC#npcHologram}. If the amount of lines is the same as the previous text, use {@link NPC#updateText()}
-     *
-     * @since 2021.1
-     *
-     * @see NPC#updateText()
-     */
-    public void forceUpdateText(){
-        if(npcHologram == null) return;
-        npcHologram.forceUpdate();
-    }
-
-    /**
-     * Destroys the NPC, and can be created after.
-     * To definitely destroy and remove the NPC instance use {@link NPCLib#removeNPC(Player, NPC)}
-     *
-     * @since 2021.1
-     *
-     * @see NPCLib#removeNPC(Player, NPC)
-     * @see NPCLib#removeNPC(Player, org.bukkit.plugin.Plugin, String)
-     */
-    public void destroy(){
-        cancelMove();
-        if(entityPlayer != null){
-            if(canSee) hide();
-            entityPlayer = null;
-        }
-        if(npcHologram != null) npcHologram.removeHologram();
-    }
-
-    /**
-     * Shows the NPC to the player. It must be {@link NPC#isCreated()} to show it.
-     * To hide it after, use {@link NPC#hide()}. This method calls {@link NPC.Events.Show}.
-     *
-     * @throws IllegalArgumentException if {@link NPC#getPlayer()} equals {@code null}
-     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
-     *
-     * @since 2021.1
-     * @see NPC#isCreated()
-     * @see NPC#create()
-     * @see NPC#hide()
-     */
-    public void show(){
-        Validate.notNull(player, "Failed to show NPC. The NPC does not have the assigned player.");
-        Validate.notNull(entityPlayer, "Failed to show NPC. The NPC has not been created yet.");
-        if(canSee && !hiddenToPlayer) return;
-        NPC.Events.Show npcShowEvent = new NPC.Events.Show(getPlayer(), this);
-        if(npcShowEvent.isCancelled()) return;
-        canSee = true;
-        if(!isInRange() || !isInView()){
-            hiddenToPlayer = true;
-            return;
-        }
-        showToPlayer();
-    }
-
-    /**
-     * Hides the NPC from the player. It must be {@link NPC#isCreated()} to hide it.
-     * To show it again, use {@link NPC#show()}. This method calls {@link NPC.Events.Hide}.
-     *
-     * @throws IllegalArgumentException if {@link NPC#getPlayer()} equals {@code null}
-     * @throws IllegalArgumentException if {@link NPC#isCreated()} equals {@code false}
-     *
-     * @since 2021.1
-     * @see NPC#isCreated()
-     * @see NPC#create()
-     * @see NPC#show()
-     */
-    public void hide(){
-        Validate.notNull(player, "Failed to hide the NPC. The NPC does not have the assigned player.");
-        Validate.notNull(entityPlayer, "Failed to hide the NPC. The NPC has not been created yet.");
-        if(!canSee) return;
-        NPC.Events.Hide npcHideEvent = new NPC.Events.Hide(getPlayer(), this);
-        if(npcHideEvent.isCancelled()) return;
-        hideToPlayer();
-        canSee = false;
-        return;
-    }
-
-    /**
-     * Sets the direction that the {@link NPC} will look to the location of the {@link Entity}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param entity The entity that will look at.
-     * @throws IllegalArgumentException if {@code entity} equals {@code null}
-     *
-     * @since 2021.1
-     * @see NPC#update()
-     */
     public void lookAt(@Nonnull Entity entity){
         Validate.notNull(entity, "Failed to set look direction. The entity cannot be null");
         lookAt(entity.getLocation());
     }
 
-    /**
-     * Sets the direction that the {@link NPC} will look to the {@link Location}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param location The location that will look at.
-     * @throws IllegalArgumentException if {@code location} equals {@code null}
-     * @throws IllegalArgumentException if NPC is not created yet
-     * @throws IllegalArgumentException if the location's world is not the same as the NPC's world.
-     *
-     * @since 2021.1
-     * @see NPC#update()
-     */
     public void lookAt(@Nonnull Location location){
         Validate.notNull(location, "Failed to set look direction. The location cannot be null.");
-        Validate.notNull(entityPlayer, "Failed to set look direction. The NPC has not been created yet.");
         Validate.isTrue(location.getWorld().getName().equals(getWorld().getName()), "The location must be in the same world as NPC");
         Location npcLocation = new Location(world, x, y, z, yaw, pitch);
         Vector dirBetweenLocations = location.toVector().subtract(npcLocation.toVector());
@@ -612,660 +189,260 @@ public class NPC {
         lookAt(npcLocation.getYaw(), npcLocation.getPitch());
     }
 
-    /**
-     * Sets the direction that the {@link NPC} will look to the {@link Location}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @since 2022.2
-     * @param yaw
-     * @param pitch
-     */
-    public void lookAt(float yaw, float pitch){
-        this.yaw = yaw; //yRot
-        this.pitch = pitch; //xRot
-        entityPlayer.o(yaw); //setYRot
-        entityPlayer.p(pitch); //setXRot
-    }
+    public abstract void lookAt(float yaw, float pitch);
 
-    /**
-     * Hides or shows the text above the {@link NPC}, but without losing the text information.
-     *
-     * @param hide boolean if the text will be hidden or not
-     * @since 2021.1
-     */
-    public void setHideText(boolean hide){
-        boolean a = hiddenText;
-        this.hiddenText = hide;
-        if(a == hide) return;
-        if(npcHologram == null) return;
-        if(hide) hideText();
-        else showText();
-    }
-
-    /**
-     * Sets whether the {@link NPC} is collidable or not.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @since 2021.1
-     *
-     * @see NPC#forceUpdate()
-     */
     public void setCollidable(boolean collidable) {
         attributes.setCollidable(collidable);
     }
 
-    /**
-     * Sets the {@link NPC.Skin} of the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param texture Texture of the skin
-     * @param signature Signature of the skin
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     */
     public void setSkin(@Nonnull String texture, @Nonnull String signature){
         setSkin(new NPC.Skin(texture, signature));
     }
 
-    /**
-     * Sets the {@link NPC.Skin} of the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param texture Texture of the skin
-     * @param signature Signature of the skin
-     * @param playerName Name of the skin owner, this is not necessary, but it will store it on the {@link NPC.Skin} instance.
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     */
     public void setSkin(@Nonnull String texture, @Nonnull String signature, @Nullable String playerName){
         setSkin(new NPC.Skin(texture, signature, playerName));
     }
 
-    /**
-     * Sets the {@link NPC.Skin} of the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param playerName Name of the skin owner. It will fetch skin even if the player is not online.
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     */
-    public void setSkin(@Nullable String playerName){
+    public void setSkin(@Nullable String playerName, Consumer finishAction){
         if(playerName == null){
             setSkin(Skin.STEVE);
             return;
         }
-        String[] skin = NPC.Skin.getSkin(playerName);
-        Validate.notNull(skin, "Failed to set NPC Skin. The Mojang API didn't respond.");
-        setSkin(skin[0], skin[1], playerName);
+        NPC.Skin.fetchSkinAsync(playerName, (skin) -> {
+            setSkin(skin);
+            if(finishAction != null) plugin.getServer().getScheduler().runTask(plugin, ()-> finishAction.accept(skin));
+        });
     }
 
-    /**
-     * Sets the {@link NPC.Skin} of the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param playerSkin Player that is online, that will fetch skin.
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     */
+    public void setSkin(@Nullable String playerName){
+        setSkin(playerName, (Consumer<Skin>) null);
+    }
+
     public void setSkin(@Nullable Player playerSkin){
         if(playerSkin == null){
             setSkin(Skin.STEVE);
             return;
         }
         Validate.isTrue(playerSkin.isOnline(), "Failed to set NPC skin. Player must be online.");
-        setSkin(playerSkin.getName());
+        setSkin(playerSkin.getName(), (Consumer<Skin>) null);
     }
 
-    /**
-     * Sets the {@link NPC.Skin} of the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param npcSkin NPC.Skin with the texture and signature.
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     */
+    public void setSkin(@Nullable Player playerSkin, Consumer<Skin> finishAction){
+        if(playerSkin == null){
+            setSkin(Skin.STEVE);
+            return;
+        }
+        Validate.isTrue(playerSkin.isOnline(), "Failed to set NPC skin. Player must be online.");
+        setSkin(playerSkin.getName(), finishAction);
+    }
+
     public void setSkin(@Nullable NPC.Skin npcSkin){
         attributes.setSkin(npcSkin);
     }
 
-    /**
-     * Sets the {@link NPC.Skin} of the {@link NPC} as the Default minecraft skin.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     */
     public void clearSkin(){
         setSkin((NPC.Skin) null);
     }
 
-    /**
-     * Sets the {@link Pose} of the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @since 2021.2
-     * @see NPC#update()
-     */
+    public void setSkinVisiblePart(NPC.Skin.Part part, boolean visible){
+        attributes.skin.parts.setVisible(part, visible);
+    }
+
     public void setPose(NPC.Pose pose){
         attributes.setPose(pose);
     }
 
-    /**
-     * Sets the {@link Pose} of the {@link NPC} as {@link Pose#CROUCHING}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @since 2021.2
-     * @see NPC#update()
-     */
     public void setCrouching(boolean b){
         if(b) setPose(NPC.Pose.CROUCHING);
         else if(getPose().equals(NPC.Pose.CROUCHING)) resetPose();
     }
 
-    /**
-     * Sets the {@link Pose} of the {@link NPC} as {@link Pose#SWIMMING}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @since 2021.2
-     * @see NPC#update()
-     */
     public void setSwimming(boolean b){
         if(b) setPose(Pose.SWIMMING);
         else if(getPose().equals(Pose.SWIMMING)) resetPose();
     }
 
-    /**
-     * Sets the {@link Pose} of the {@link NPC} as {@link Pose#SLEEPING}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @since 2021.2
-     * @see NPC#update()
-     */
     public void setSleeping(boolean b){
         if(b) setPose(Pose.SLEEPING);
         else if(getPose().equals(Pose.SLEEPING)) resetPose();
     }
 
-    /**
-     * Sets the {@link Pose} of the {@link NPC} as {@link Pose#STANDING}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @since 2021.2
-     * @see NPC#update()
-     */
     public void resetPose(){
         setPose(NPC.Pose.STANDING);
     }
 
-    /**
-     * Clears the text above the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdateText()
-     */
     public void clearText(){
         setText(new ArrayList<>());
     }
 
-    /**
-     * Sets the text above the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#updateText()} if there are the same amount of lines or
-     * {@link NPC#forceUpdateText()} if there are different amount of lines, to show it to the {@link Player}
-     *
-     * @param text The text above the NPC, each {@link String} will be one line.
-     *
-     * @since 2021.1
-     * @see NPC#updateText()
-     * @see NPC#forceUpdateText()
-     */
     public void setText(@Nonnull List<String> text){
         attributes.setText(text);
-        if(npcHologram == null) return;
-        int i = 1;
-        for(String s : text){
-            npcHologram.setLine(i, s);
-            i++;
-        }
     }
 
-    /**
-     * Sets the text above the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#updateText()} if there are the same amount of lines or
-     * {@link NPC#forceUpdateText()} if there are different amount of lines, to show it to the {@link Player}
-     *
-     * @param text The text above the NPC, each {@link String} will be one line.
-     *
-     * @since 2021.1
-     * @see NPC#updateText()
-     * @see NPC#forceUpdateText()
-     */
     public void setText(@Nonnull String... text){
         setText(Arrays.asList(text));
     }
 
-    /**
-     * Sets the text above the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#updateText()} if there are the same amount of lines or
-     * {@link NPC#forceUpdateText()} if there are different amount of lines, to show it to the {@link Player}
-     *
-     * @param text The text above the NPC, it will be only one line.
-     *
-     * @since 2021.1
-     * @see NPC#updateText()
-     * @see NPC#forceUpdateText()
-     */
     public void setText(@Nonnull String text){
         setText(Arrays.asList(text));
     }
 
-    /**
-     *
-     * @param line
-     * @param textOpacity
-     * @since 2022.1
-     */
+    public void resetLinesOpacity(){ attributes.resetLinesOpacity(); }
+
+    public void resetLineOpacity(int line){ attributes.resetLineOpacity(line); }
+
     public void setLineOpacity(int line, @Nullable NPC.Hologram.Opacity textOpacity){
-        if(textOpacity == null) textOpacity = NPC.Hologram.Opacity.LOWEST;
-        linesOpacity.put(line, textOpacity);
+        attributes.setLineOpacity(line, textOpacity);
     }
 
-    /**
-     *
-     * @param line
-     * @since 2022.1
-     */
-    public void resetLineOpacity(int line){
-        setLineOpacity(line, NPC.Hologram.Opacity.LOWEST);
+    protected void setLinesOpacity(HashMap<Integer, NPC.Hologram.Opacity> linesOpacity){
+        attributes.setLinesOpacity(linesOpacity);
     }
 
-    /**
-     *
-     * @param textOpacity
-     * @see NPC#forceUpdateText()
-     */
     public void setTextOpacity(@Nullable NPC.Hologram.Opacity textOpacity){
         attributes.setTextOpacity(textOpacity);
     }
 
-    /**
-     *
-     * @since 2022.1
-     * @see NPC#forceUpdateText()
-     */
     public void resetTextOpacity(){
         setTextOpacity(NPC.Hologram.Opacity.LOWEST);
     }
 
-    /**
-     * Sets the glowing color of the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param color The glowing color.
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     * @see NPC#setGlowing(boolean)
-     * @see NPC#setGlowing(boolean, ChatColor)
-     */
     public void setGlowingColor(@Nullable ChatColor color){
         setGlowingColor(NPC.Color.getColor(color));
     }
 
-    /**
-     * Sets the glowing color of the {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param color The glowing color.
-     *
-     * @since 2022.2
-     * @see NPC#forceUpdate()
-     * @see NPC#setGlowing(boolean)
-     * @see NPC#setGlowing(boolean, NPC.Color)
-     */
     public void setGlowingColor(@Nullable Color color){
         attributes.setGlowingColor(color);
     }
 
-    /**
-     * Sets the glowing color of the {@link NPC}, and if it's glowing or not.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param glowing Whether it's glowing or not.
-     * @param color The glowing color.
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     * @see NPC#setGlowingColor(ChatColor)
-     * @see NPC#setGlowing(boolean)
-     */
     public void setGlowing(boolean glowing, @Nullable ChatColor color){
         setGlowing(glowing, NPC.Color.getColor(color));
     }
 
-    /**
-     * Sets the glowing color of the {@link NPC}, and if it's glowing or not.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param glowing Whether it's glowing or not.
-     * @param color The glowing color.
-     *
-     * @since 2022.2
-     * @see NPC#forceUpdate()
-     * @see NPC#setGlowingColor(NPC.Color)
-     * @see NPC#setGlowing(boolean)
-     */
     public void setGlowing(boolean glowing, @Nullable Color color){
         setGlowing(glowing);
         setGlowingColor(color);
     }
 
-    /**
-     * Sets if the {@link NPC} is glowing or not.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#update()} to show it to the {@link Player}
-     *
-     * @param glowing Whether it's glowing or not.
-     *
-     * @since 2021.1
-     * @see NPC#update()
-     * @see NPC#setGlowingColor(ChatColor)
-     * @see NPC#setGlowing(boolean, ChatColor)
-     */
     public void setGlowing(boolean glowing){
         attributes.setGlowing(glowing);
     }
 
-    /**
-     * Sets the custom tab list name {@link NPC}, and if it's showing or not.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param name The name will be visible at tab list. "{UUID}" will replace the uuid of the NPC. It cannot be larger
-     *             than 16 characters, and it can be the same as another NPC.
-     * @param show Whether it's showing or not.
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     * @see NPC#setCustomTabListName(String)
-     * @see NPC#setShowOnTabList(boolean)
-     */
-    public void setCustomTabListName(@Nullable String name, boolean show){
-        setCustomTabListName(name);
-        setShowOnTabList(show);
+    public Move.Behaviour follow(NPC npc){
+        Validate.isTrue(!npc.equals(this), "NPC cannot follow himself.");
+        return moveBehaviour.setFollowNPC(npc);
     }
 
-    /**
-     * Sets if it's showing or not the custom name on tab list.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param show Whether it's showing or not.
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     * @see NPC#setCustomTabListName(String, boolean)
-     * @see NPC#setCustomTabListName(String)
-     */
-    public void setShowOnTabList(boolean show){
-        attributes.setShowOnTabList(show);
+    public Move.Behaviour follow(NPC npc, double min, double max){
+        Validate.isTrue(!npc.equals(this), "NPC cannot follow himself.");
+        return moveBehaviour.setFollowNPC(npc, min, max);
     }
 
-    /**
-     * Sets the custom tab list name {@link NPC}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdate()} to show it to the {@link Player}
-     *
-     * @param name The name will be visible at tab list. "{UUID}" will replace the uuid of the NPC. It cannot be larger
-     *             than 16 characters, and it can be the same as another NPC.
-     *
-     * @since 2021.1
-     * @see NPC#forceUpdate()
-     * @see NPC#setCustomTabListName(String, boolean)
-     * @see NPC#setShowOnTabList(boolean)
-     */
-    public void setCustomTabListName(@Nullable String name){
-        if(name == null) name = Attributes.getDefaultTabListName();
-        final String finalName = getReplacedCustomName(name);
-        Validate.isTrue(finalName.length() <= 16, "Error setting custom tab list name. Name must be 16 or less characters.");
-        Validate.isTrue(getNPCLib().getNPCPlayerManager(player).getNPCs(world).stream().filter(x-> x.getReplacedCustomName().equals(finalName)).findAny().orElse(null) == null, "Error setting custom tab list name. There's another NPC with that name already.");
-        attributes.setCustomTabListName(name);
+    public Move.Behaviour follow(Entity entity, double min, double max){
+        return moveBehaviour.setFollowEntity(entity, min, max);
     }
 
-    /**
-     * Sets the following look type of the {@link NPC}.
-     *
-     * @since 2021.1
-     *
-     */
+    public Move.Behaviour follow(Entity entity, double min){
+        return moveBehaviour.setFollowEntity(entity, min);
+    }
+
+    public Move.Behaviour follow(Entity entity){
+        return moveBehaviour.setFollowEntity(entity);
+    }
+
+    public void cancelMoveBehaviour(){
+        moveBehaviour.cancel();
+    }
+
+    public NPC.Move.Path setPath(Move.Path.Type type, List<Location> locations){
+        return getMoveBehaviour().setPath(locations, type).start();
+    }
+
+    public NPC.Move.Path setPath(Move.Path.Type type, Location... locations){
+        return setPath(type, Arrays.stream(locations).toList());
+    }
+
+    public NPC.Move.Path setRepetitivePath(List<Location> locations){
+        return setPath(Move.Path.Type.REPETITIVE, locations);
+    }
+
+    public NPC.Move.Path setRepetitivePath(Location... locations){
+        return setRepetitivePath(Arrays.stream(locations).toList());
+    }
+
     public void setFollowLookType(@Nullable FollowLookType followLookType) {
         attributes.setFollowLookType(followLookType);
     }
 
-    /**
-     * Sets the distance of auto hide of the {@link NPC}.
-     *
-     * @throws IllegalArgumentException if hide distance is negative or 0
-     *
-     * @since 2021.1
-     */
     public void setHideDistance(double hideDistance) {
         attributes.setHideDistance(hideDistance);
     }
 
-    /**
-     * Sets the line spacing of the {@link NPC.Hologram}.
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
-     *
-     * @param lineSpacing The distance (y-axis) between the ArmorStands in NPCHologram.
-     * @since 2022.1
-     *
-     * @see NPC#forceUpdateText()
-     * @see NPC#resetLineSpacing()
-     * @see NPC#getLineSpacing()
-     */
     public void setLineSpacing(double lineSpacing){
         attributes.setLineSpacing(lineSpacing);
     }
 
-    /**
-     * Sets the line spacing of the {@link NPC.Hologram} to the default value ({@link NPC.Attributes#getDefaultLineSpacing()}).
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
-     *
-     * @since 2022.1
-     *
-     * @see NPC#forceUpdateText()
-     * @see NPC#setLineSpacing(double) 
-     * @see NPC#getLineSpacing()
-     */
     public void resetLineSpacing(){
         setLineSpacing(NPC.Attributes.getDefault().getLineSpacing());
     }
 
-    /**
-     * Sets the text alignment of the {@link NPC.Hologram} as the {@link Vector}
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
-     *
-     * @param vector The alignment of the hologram respective to the NPC
-     * @since 2022.1
-     */
     public void setTextAlignment(@Nonnull Vector vector){
         attributes.setTextAlignment(vector);
     }
 
-    /**
-     * Sets the text alignment of the {@link NPC.Hologram} as the {@link Attributes#getDefaultTextAlignment()}
-     * If {@link NPC#isCreated()}, you must use {@link NPC#forceUpdateText()} to show it to the {@link Player}
-     *
-     * @since 2022.1
-     */
     public void resetTextAlignment(){
         setTextAlignment(null);
     }
 
-    /**
-     *
-     * @since 2022.1
-     */
     public void setInteractCooldown(long milliseconds){
         attributes.setInteractCooldown(milliseconds);
     }
 
-    /**
-     *
-     * @since 2022.1
-     */
     public void resetInteractCooldown(){
         setInteractCooldown(NPC.Attributes.getDefaultInteractCooldown());
     }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    public void addCustomClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull NPC.Interact.Actions.Custom.CustomAction customAction){
-        addClickAction(new NPC.Interact.Actions.Custom(this, clickType,customAction));
-    }
+    public void addCustomClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull BiConsumer<NPC, Player> customAction){ addClickAction(new NPC.Interact.Actions.Custom(this, clickType,customAction)); }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    public void addCustomClickAction(@Nonnull NPC.Interact.Actions.Custom.CustomAction customAction){
-        addCustomClickAction(null, customAction);
-    }
+    public void addCustomClickAction(@Nonnull BiConsumer<NPC, Player> customAction){ addCustomClickAction(null, customAction); }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    public void addMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String... message){
-        addClickAction(new NPC.Interact.Actions.Message(this, clickType, message));
-    }
+    public void addMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String... message){ addClickAction(new NPC.Interact.Actions.Message(this, clickType, message)); }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    public void addMessageClickAction(@Nonnull String... message){
-        addMessageClickAction(null, message);
-    }
+    public void addMessageClickAction(@Nonnull String... message){ addMessageClickAction(null, message); }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    public void addRunPlayerCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){
-        addClickAction(new NPC.Interact.Actions.PlayerCommand(this, clickType, command));
-    }
+    public void addRunPlayerCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){ addClickAction(new NPC.Interact.Actions.PlayerCommand(this, clickType, command)); }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    public void addRunPlayerCommandClickAction(@Nonnull String command){
-        addRunPlayerCommandClickAction(null, command);
-    }
+    public void addRunPlayerCommandClickAction(@Nonnull String command){ addRunPlayerCommandClickAction(null, command); }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    public void addRunConsoleCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){
-        addClickAction(new NPC.Interact.Actions.ConsoleCommand(this, clickType, command));
-    }
+    public void addRunConsoleCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){ addClickAction(new NPC.Interact.Actions.ConsoleCommand(this, clickType, command)); }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    public void addRunConsoleCommandClickAction(@Nonnull String command){
-        addRunConsoleCommandClickAction(null, command);
-    }
+    public void addRunConsoleCommandClickAction(@Nonnull String command){ addRunConsoleCommandClickAction(null, command); }
 
-    /**
-     *
-     * @param clickType
-     * @param server
-     * @since 2022.2
-     */
-    public void addConnectBungeeServerClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String server){
-        addClickAction(new NPC.Interact.Actions.BungeeServer(this, clickType, server));
-    }
+    public void addConnectBungeeServerClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String server){ addClickAction(new NPC.Interact.Actions.BungeeServer(this, clickType, server)); }
 
-    /**
-     * @since 2022.2
-     * @param server
-     */
-    public void addConnectBungeeServerClickAction(@Nonnull String server){
-        addConnectBungeeServerClickAction(null, server);
-    }
+    public void addConnectBungeeServerClickAction(@Nonnull String server){ addConnectBungeeServerClickAction(null, server); }
 
-    /**
-     * @since 2022.2
-     * @param clickType
-     * @param message
-     */
-    public void addActionBarMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String message){
-        addClickAction(new NPC.Interact.Actions.ActionBar(this, clickType, message));
-    }
+    public void addActionBarMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String message){ addClickAction(new NPC.Interact.Actions.ActionBar(this, clickType, message)); }
 
-    /**
-     * @since 2022.2
-     * @param message
-     */
-    public void addActionBarMessageClickAction(@Nonnull String message){
-        addActionBarMessageClickAction(null, message);
-    }
+    public void addActionBarMessageClickAction(@Nonnull String message){ addActionBarMessageClickAction(null, message); }
 
-    /**
-     * @since 2022.2
-     * @param clickType
-     * @param title
-     * @param subtitle
-     * @param fadeIn
-     * @param stay
-     * @param fadeOut
-     */
-    public void addTitleMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){
-        addClickAction(new NPC.Interact.Actions.Title(this, clickType, title, subtitle, fadeIn, stay, fadeOut));
-    }
+    public void addTitleMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){ addClickAction(new NPC.Interact.Actions.Title(this, clickType, title, subtitle, fadeIn, stay, fadeOut)); }
 
-    /**
-     * @since 2022.2
-     * @param title
-     * @param subtitle
-     * @param fadeIn
-     * @param stay
-     * @param fadeOut
-     */
-    public void addTitleMessageClickAction(@Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){
-        addTitleMessageClickAction(null, title, subtitle, fadeIn, stay, fadeOut);
-    }
+    public void addTitleMessageClickAction(@Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){ addTitleMessageClickAction(null, title, subtitle, fadeIn, stay, fadeOut); }
 
-    /**
-     *
-     * @since 2022.1
-     */
+    public void addTeleportToLocationClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull Location location){ addClickAction(new NPC.Interact.Actions.TeleportToLocation(this, clickType, location)); }
+
+    public void addTeleportToLocationClickAction(@Nonnull Location location){ addTeleportToLocationClickAction(null, location); }
+
     public void resetClickActions(@Nonnull NPC.Interact.ClickType clickType){
         List<NPC.Interact.ClickAction> remove = this.clickActions.stream().filter(x-> x.getClickType() != null && x.getClickType().equals(clickType)).collect(Collectors.toList());
         clickActions.removeAll(remove);
     }
 
-    /**
-     *
-     * @since 2022.1
-     */
     public void resetClickActions(){
         this.clickActions = new ArrayList<>();
     }
 
-    /**
-     * @since 2022.2
-     * @param end
-     * @param lookToEnd
-     */
     public Move.Task goTo(@Nonnull Location end, boolean lookToEnd){
         Validate.notNull(end, "Cannot move NPC to a null location.");
         Validate.isTrue(end.getWorld().getName().equals(world.getName()), "Cannot move NPC to another world.");
@@ -1280,100 +457,41 @@ public class NPC {
         return goTo(end, true);
     }
 
-    /**
-     * @since 2022.2
-     * @param end
-     * @param lookToEnd
-     * @param moveSpeed
-     */
     public Move.Task goTo(@Nonnull Location end, boolean lookToEnd, @Nullable Move.Speed moveSpeed){
         setMoveSpeed(moveSpeed);
         return goTo(end, lookToEnd);
     }
 
-    /**
-     * @since 2022.2
-     * @param end
-     * @param moveSpeed
-     * @return
-     */
     public Move.Task goTo(@Nonnull Location end, @Nullable Move.Speed moveSpeed){
         setMoveSpeed(moveSpeed);
         return goTo(end, true);
     }
 
-    /**
-     * @since 2022.2
-     */
     public void cancelMove(){
         if(this.moveTask != null) moveTask.cancel(Move.Task.CancelCause.CANCELLED);
         clearMoveTask();
     }
 
-    /**
-     * @since 2022.2
-     * @param x
-     * @param y
-     * @param z
-     */
-    protected void move(double x, double y, double z){
-        Validate.isTrue(x < 8 && y < 8 && z < 8, "NPC cannot move 8 blocks or more at once, use teleport instead");
-        NPC.Events.Move npcMoveEvent = new NPC.Events.Move(this, new Location(world, this.x + x, this.y + y, this.z + z));
-        if(npcMoveEvent.isCancelled()) return;
-        this.x += x;
-        this.y += y;
-        this.z += z;
-        entityPlayer.g(this.x, this.y, this.z);
-        if(npcHologram != null) npcHologram.move(new Vector(x, y, z));
-        movePacket(x, y, z);
+    public void setShowOnTabList(boolean show){
+        attributes.setShowOnTabList(show);
     }
 
-    /**
-     * @since 2022.2
-     * @param moveSpeed
-     */
     public void setMoveSpeed(@Nullable Move.Speed moveSpeed){
         attributes.setMoveSpeed(moveSpeed);
     }
 
-    /**
-     * @since 2022.2
-     * @param moveSpeed
-     */
     public void setMoveSpeed(double moveSpeed){
         attributes.setMoveSpeed(moveSpeed);
     }
 
-    /**
-     * @since 2022.2
-     * @param animation
-     */
-    public void playAnimation(NPC.Animation animation){
-        if(animation.isDeprecated()) return;
-        PacketPlayOutAnimation packet = new PacketPlayOutAnimation(entityPlayer, animation.getId());
-        NMSCraftPlayer.sendPacket(player, packet);
-    }
+    public abstract void playAnimation(NPC.Animation animation);
 
-    /**
-     * @since 2022.2
-     */
-    public void hit(){
-        player.playSound(getLocation(), Sound.ENTITY_PLAYER_ATTACK_STRONG, 1.0F, 1.0F);
-        playAnimation(Animation.TAKE_DAMAGE);
-    }
+    public abstract void hit();
 
-    /**
-     * @since 2022.2
-     * @param onFire
-     */
     public void setOnFire(boolean onFire) {
         attributes.setOnFire(onFire);
     }
 
-    /**
-     * @since 2022.2
-     * @param ticks
-     */
     public void setFireTicks(@Nonnull Integer ticks){
         setOnFire(true);
         update();
@@ -1385,170 +503,37 @@ public class NPC {
         }, ticks.longValue());
     }
 
-    /**
-     * The {@link NPC} will follow another NPC around the world.
-     *
-     * @since 2022.2
-     * @param npc the NPC that will be followed
-     * @return the {@link Move.Behaviour} of the {@link NPC}
-     */
-    public Move.Behaviour follow(NPC npc){
-        Validate.isTrue(!npc.equals(this), "NPC cannot follow himself.");
-        return moveBehaviour.setFollowNPC(npc);
+    public void setCustomTabListName(@Nullable String name, boolean show){
+        setCustomTabListName(name);
+        setShowOnTabList(show);
     }
 
-    /**
-     * The {@link NPC} will follow another NPC around the world.
-     *
-     * @since 2022.2
-     * @param npc the NPC that will be followed
-     * @param min the NPC won't approach less distance to the NPC
-     * @param max the NPC won't separate more distance of the NPC
-     * @return the {@link Move.Behaviour} of the {@link NPC}
-     */
-    public Move.Behaviour follow(NPC npc, double min, double max){
-        Validate.isTrue(!npc.equals(this), "NPC cannot follow himself.");
-        return moveBehaviour.setFollowNPC(npc, min, max);
+    public abstract void setCustomTabListName(@Nullable String name);
+
+    public void resetCustomTabListName(){
+        setCustomTabListName(null);
     }
 
-    /**
-     * The {@link NPC} will follow the Player who sees it around the world.
-     *
-     * @since 2022.2
-     * @return the {@link Move.Behaviour} of the {@link NPC}
-     */
-    public Move.Behaviour followPlayer(){
-        return moveBehaviour.setFollowPlayer();
+    public void setCustomData(String key, String value){
+        customData.put(key, value);
     }
 
-    /**
-     * The {@link NPC} will follow the Player who sees it around the world.
-     *
-     * @param max the NPC won't separate more distance of the NPC
-     * @param min the NPC won't approach less distance to the NPC
-     * @since 2022.2
-     * @return the {@link Move.Behaviour} of the {@link NPC}
-     */
-    public Move.Behaviour followPlayer(double min, double max){
-        return moveBehaviour.setFollowPlayer(min, max);
+    public String getCustomData(String key){
+        if(!customData.containsKey(key)) return null;
+        return customData.get(key);
     }
 
-    /**
-     * The {@link NPC} will follow the Entity around the world.
-     *
-     * @param max the NPC won't separate more distance of the NPC
-     * @param min the NPC won't approach less distance to the NPC
-     * @since 2022.2
-     * @return the {@link Move.Behaviour} of the {@link NPC}
-     */
-    public Move.Behaviour follow(Entity entity, double min, double max){
-        return moveBehaviour.setFollowEntity(entity, min, max);
-    }
-
-    /**
-     * The {@link NPC} will follow the Entity around the world.
-     *
-     * @param min the NPC won't approach less distance to the NPC
-     * @since 2022.2
-     * @return the {@link Move.Behaviour} of the {@link NPC}
-     */
-    public Move.Behaviour follow(Entity entity, double min){
-        return moveBehaviour.setFollowEntity(entity, min);
-    }
-
-    /**
-     * The {@link NPC} will follow the Entity around the world.
-     *
-     * @since 2022.2
-     * @return the {@link Move.Behaviour} of the {@link NPC}
-     */
-    public Move.Behaviour follow(Entity entity){
-        return moveBehaviour.setFollowEntity(entity);
-    }
-
-    /**
-     * The {@link NPC} will stop doing its move behaviour
-     *
-     * @since 2022.2
-     */
-    public void cancelMoveBehaviour(){
-        moveBehaviour.cancel();
-    }
-
-    /**
-     * @since 2022.2
-     * @param type
-     * @param locations
-     * @return
-     */
-    public NPC.Move.Path setPath(Move.Path.Type type, List<Location> locations){
-        return getMoveBehaviour().setPath(locations, type).start();
-    }
-
-    /**
-     * @since 2022.2
-     * @param type
-     * @param locations
-     * @return
-     */
-    public NPC.Move.Path setPath(Move.Path.Type type, Location... locations){
-        return setPath(type, Arrays.stream(locations).toList());
-    }
-
-    /**
-     * @since 2022.2
-     * @param locations
-     * @return
-     */
-    public NPC.Move.Path setRepetitivePath(List<Location> locations){
-        return setPath(Move.Path.Type.REPETITIVE, locations);
-    }
-
-    /**
-     * @since 2022.2
-     * @param locations
-     * @return
-     */
-    public NPC.Move.Path setRepetitivePath(Location... locations){
-        return setRepetitivePath(Arrays.stream(locations).toList());
-    }
-
-    @Deprecated
-    protected void dropItem(ItemStack itemStack){
-    }
-
-    @Deprecated
-    protected void dropItemInSlot(NPC.Slot slot){
-        ItemStack itemStack = getEquipment(slot);
-        clearEquipment(slot);
-        dropItem(itemStack);
-    }
-
-    @Deprecated
-    protected void dropItemInHand(){
-        dropItemInSlot(Slot.MAINHAND);
+    public boolean hasCustomData(String key){
+        return customData.containsKey(key);
     }
 
     /*
                 Protected and private access methods
     */
 
-    protected void reCreate(){
-        Validate.notNull(player, "Failed to re-create the NPC. The NPC does not have the assigned player.");
-        Validate.notNull(entityPlayer, "Failed to re-create the NPC. The NPC has not been created yet.");
-        boolean show = canSee;
-        hide();
-        entityPlayer = null;
-        create();
-        if(show) show();
-    }
+    protected abstract void move(double moveX, double moveY, double moveZ);
 
-    protected void interact(@Nonnull Player player, @Nonnull NPC.Interact.ClickType clickType){
-        if(player == null || player.getUniqueId() != this.player.getUniqueId()) return;
-        NPC.Events.Interact npcInteractEvent = new NPC.Events.Interact(player, this, clickType);
-        if(npcInteractEvent.isCancelled()) return;
-        getClickActions(clickType).forEach(x-> x.execute());
-    }
+    protected abstract void updatePlayerRotation();
 
     protected void setClickActions(@Nonnull List<NPC.Interact.ClickAction> clickActions){
         this.clickActions = clickActions;
@@ -1558,122 +543,487 @@ public class NPC {
         attributes.setSlots(slots);
     }
 
-    /**
-     * Sets the {@link NPC#entityPlayer}'s {@link GameProfile}'s property "textures"
-     * as the {@link Attributes#getSkin()} previously setted with {@link NPC#setSkin(NPC.Skin)}.
-     * If the {@link NPC#entityPlayer} is {@link NPC#isCreated()}, you need
-     * to do {@link NPC#update()} to send changes to the {@link NPC#player}'s client.
-     *
-     * @see     NPC#isCreated()
-     * @see     NPC#setSkin(NPC.Skin)
-     * @see     NPC#update()
-     */
-    private void updateSkin(){
-        GameProfile gameProfile = NMSEntityPlayer.getGameProfile(entityPlayer);
-        gameProfile.getProperties().get("textures").clear();
-        gameProfile.getProperties().put("textures", new Property("textures", attributes.skin.getTexture(), attributes.skin.getSignature()));
+    protected abstract void updateLocation();
+
+    protected abstract void updateMove();
+
+
+    protected void addClickAction(@Nonnull NPC.Interact.ClickAction clickAction){
+        this.clickActions.add(clickAction);
     }
 
-
-    private void updatePose(){
-        if(getPose().equals(NPC.Pose.SLEEPING)) entityPlayer.e(new BlockPosition(x, y, z));
-        entityPlayer.b(getPose().getEntityPose());
+    protected void clearMoveTask(){
+        this.moveTask = null;
     }
 
-    protected void updateMove(){
-        if(player == null) return;
-        if(entityPlayer == null) return;
-        if(!canSee) return;
-        if(!hiddenToPlayer && !isInRange()){
+    /*
+                             Getters
+    */
+
+    public Location getLocation(){
+        return new Location(getWorld(), getX(), getY(), getZ(), getYaw(), getPitch());
+    }
+
+    protected HashMap<NPC.Slot, ItemStack> getEquipment(){
+        return attributes.slots;
+    }
+
+    public ItemStack getEquipment(NPC.Slot npcSlot){
+        return attributes.slots.get(npcSlot);
+    }
+
+    public double getMoveSpeed() {
+        return attributes.moveSpeed;
+    }
+
+    public Move.Task getMoveTask() {
+        return moveTask;
+    }
+
+    protected Move.Behaviour getMoveBehaviour(){ return moveBehaviour; }
+
+    public Move.Behaviour.Type getMoveBehaviourType(){
+        return moveBehaviour.getType();
+    }
+
+    public World getWorld() {
+        return world;
+    }
+
+    public Double getX() {
+        return x;
+    }
+
+    public Double getY() {
+        return y;
+    }
+
+    public Double getZ() {
+        return z;
+    }
+
+    public Float getYaw() {
+        return yaw;
+    }
+
+    public Float getPitch() {
+        return pitch;
+    }
+
+    public NPCLib getNPCLib() {
+        return npcLib;
+    }
+
+    public String getCode() {
+        return code;
+    }
+
+    public String getSimpleCode() { return "" + this.code.replaceFirst("" + plugin.getName().toLowerCase() + "\\.", ""); }
+
+    public List<String> getText() {
+        return attributes.text;
+    }
+
+    public NPC.Skin getSkin() {
+        return attributes.skin;
+    }
+
+    public boolean isCollidable() {
+        return attributes.collidable;
+    }
+
+    public Double getHideDistance() {
+        return attributes.hideDistance;
+    }
+
+    public Double getLineSpacing(){
+        return attributes.lineSpacing;
+    }
+
+    public Vector getTextAlignment() {
+        return attributes.textAlignment;
+    }
+
+    public Long getInteractCooldown() {
+        return attributes.interactCooldown;
+    }
+
+    public NPC.Color getGlowingColor() {
+        return attributes.glowingColor;
+    }
+
+    protected HashMap<NPC.Slot, ItemStack> getSlots() {
+        return attributes.slots;
+    }
+
+    public boolean isShowOnTabList() { return attributes.showOnTabList; }
+
+    public String getCustomTabListName() { return attributes.customTabListName; }
+
+    public boolean isGlowing() { return attributes.glowing; }
+
+    public FollowLookType getFollowLookType() { return attributes.followLookType; }
+
+    public NPC.Pose getPose() { return attributes.pose; }
+
+    public NPC.Hologram.Opacity getLineOpacity(int line){ return attributes.getLineOpacity(line); }
+
+    public NPC.Hologram.Opacity getTextOpacity() { return attributes.textOpacity; }
+
+    public boolean isOnFire() { return attributes.onFire; }
+
+    public NPC.Attributes getAttributes() { return attributes; }
+
+    public Plugin getPlugin() { return plugin; }
+
+    protected List<NPC.Interact.ClickAction> getClickActions() { return clickActions; }
+
+    protected List<NPC.Interact.ClickAction> getClickActions(@Nonnull NPC.Interact.ClickType clickType){ return this.clickActions.stream().filter(x-> clickType == null || x.getClickType() == null || x.getClickType().equals(clickType)).collect(Collectors.toList()); }
+
+    protected HashMap<Integer, NPC.Hologram.Opacity> getLinesOpacity() { return attributes.linesOpacity; }
+
+    public static class Personal extends NPC{
+
+        private final Player player;
+        private final UUID gameProfileID;
+        private EntityPlayer entityPlayer;
+        private NPC.Hologram npcHologram;
+        private boolean canSee;
+        private boolean hiddenText;
+        private boolean hiddenToPlayer;
+        private boolean shownOnTabList;
+        private NPC.Global global;
+
+        protected Personal(@Nonnull NPCLib npcLib, @Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull World world, double x, double y, double z, float yaw, float pitch){
+            super(npcLib, plugin, code, world, x, y, z, yaw, pitch);
+            Validate.notNull(player, "Cannot generate NPC instance, Player cannot be null.");
+            this.player = player;
+            this.gameProfileID = UUID.randomUUID();
+            this.canSee = false;
+            this.npcHologram = null;
+            this.shownOnTabList = false;
+            this.hiddenToPlayer = true;
+            this.hiddenText = false;
+            this.global = null;
+            npcLib.getNPCPlayerManager(player).set(code, this);
+        }
+
+        protected Personal(@Nonnull NPCLib npcLib, @Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull Location location){
+            this(npcLib, player, plugin, code, location.getWorld(), location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch());
+        }
+
+        public void create(){
+            Validate.notNull(super.attributes.skin, "Failed to create the NPC. The NPC.Skin has not been configured.");
+            Validate.isTrue(entityPlayer == null, "Failed to create the NPC. This NPC has already been created before.");
+            MinecraftServer server = NMSCraftServer.getMinecraftServer();
+            WorldServer worldServer = NMSCraftWorld.getWorldServer(super.world);
+            GameProfile gameProfile = new GameProfile(gameProfileID, getReplacedCustomName());
+            entityPlayer = new EntityPlayer(server, worldServer, gameProfile);
+            entityPlayer.a(super.x, super.y, super.z, super.yaw, super.pitch);//setLocation
+            this.npcHologram = new NPC.Hologram(this, player);
+            updateSkin();
+            updatePose();
+            updateScoreboard(player);
+        }
+
+
+        public void update(){
+            Validate.notNull(entityPlayer, "Failed to update the NPC. The NPC has not been created yet.");
+            if(!canSee) return;
+            if(!hiddenToPlayer && !isInRange()){
+                hideToPlayer();
+                return;
+            }
+            if(hiddenToPlayer && isInRange() && isInView()){
+                showToPlayer();
+                return;
+            }
+            updatePose();
+            updateLook();
+            updateSkin();
+            updatePlayerRotation();
+            updateEquipment();
+            updateMetadata();
+        }
+
+        public void forceUpdate(){
+            Validate.notNull(entityPlayer, "Failed to force update the NPC. The NPC has not been created yet.");
+            reCreate();
+            update();
+            forceUpdateText();
+        }
+
+        public void teleport(World world, double x, double y, double z, float yaw, float pitch){
+            Validate.notNull(entityPlayer, "Failed to move the NPC. The NPC has not been created yet.");
+            NPC.Events.Teleport npcTeleportEvent = new NPC.Events.Teleport(this, new Location(world, x, y, z, yaw, pitch));
+            if(npcTeleportEvent.isCancelled()) return;
+            super.x = x;
+            super.y = y;
+            super.z = z;
+            super.yaw = yaw;
+            super.pitch = pitch;
+            if(!super.world.equals(world)) changeWorld(world);
+            boolean show = canSee;
+            if(npcHologram != null) npcHologram.hide();
+            reCreate();
+            if(npcHologram != null) forceUpdateText();
+            if(show) show();
+            else if(npcHologram != null) hideText();
+        }
+
+        public void updateText(){
+            if(npcHologram == null) return;
+            int i = 1;
+            for(String s : super.attributes.text){
+                npcHologram.setLine(i, s);
+                i++;
+            }
+            npcHologram.update();
+        }
+
+        public void forceUpdateText(){
+            if(npcHologram == null) return;
+            npcHologram.forceUpdate();
+        }
+
+        public void destroy(){
+            cancelMove();
+            if(entityPlayer != null){
+                if(canSee) hide();
+                entityPlayer = null;
+            }
+            if(npcHologram != null) npcHologram.removeHologram();
+        }
+
+        public void show(){
+            Validate.notNull(entityPlayer, "Failed to show NPC. The NPC has not been created yet.");
+            if(canSee && !hiddenToPlayer) return;
+            NPC.Events.Show npcShowEvent = new NPC.Events.Show(getPlayer(), this);
+            if(npcShowEvent.isCancelled()) return;
+            canSee = true;
+            if(!isInRange() || !isInView()){
+                hiddenToPlayer = true;
+                return;
+            }
+            //showToPlayer();
+            double hideDistance = super.attributes.hideDistance;
+            super.attributes.hideDistance = 0.0;
+            Bukkit.getScheduler().scheduleSyncDelayedTask(getPlugin(), ()-> {
+                super.attributes.hideDistance = hideDistance;
+                showToPlayer();
+            },10);
+        }
+
+        public void hide(){
+            Validate.notNull(entityPlayer, "Failed to hide the NPC. The NPC has not been created yet.");
+            if(!canSee) return;
+            NPC.Events.Hide npcHideEvent = new NPC.Events.Hide(getPlayer(), this);
+            if(npcHideEvent.isCancelled()) return;
             hideToPlayer();
+            canSee = false;
             return;
         }
-        if(hiddenToPlayer && isInRange() && isInView()){
-            showToPlayer();
-            return;
-        }
-        updateLook();
-        updatePlayerRotation();
-    }
 
-    private void updateLook(){
-        if(!player.getWorld().getName().equals(getWorld().getName())) return;
-        if(getFollowLookType().equals(FollowLookType.PLAYER)) lookAt(player);
-        else if(getFollowLookType().equals(FollowLookType.NEAREST_PLAYER) || getFollowLookType().equals(FollowLookType.NEAREST_ENTITY)){
-            Bukkit.getScheduler().scheduleSyncDelayedTask(getNPCLib().getPlugin(), ()-> {
-                Entity near = null;
-                double var0 = getHideDistance();
+        public void setHideText(boolean hide){
+            boolean a = hiddenText;
+            this.hiddenText = hide;
+            if(a == hide) return;
+            if(npcHologram == null) return;
+            if(hide) hideText();
+            else showText();
+        }
+
+        @Override
+        public void setCustomTabListName(@Nullable String name){
+            if(name == null) name = Attributes.getDefaultTabListName();
+            final String finalName = getReplacedCustomName(name);
+            Validate.isTrue(finalName.length() <= 16, "Error setting custom tab list name. Name must be 16 or less characters.");
+            if(!name.contains("{id}")) Validate.isTrue(getNPCLib().getNPCPlayerManager(player).getNPCs().stream().filter(x-> x.getReplacedCustomName().equals(finalName)).findAny().orElse(null) == null, "Error setting custom tab list name. There's another NPC with that name already.");
+            super.attributes.setCustomTabListName(name);
+        }
+
+        @Override
+        protected void updateLocation() {
+            updateLocation(player);
+        }
+
+        public Move.Behaviour followPlayer(){
+            return super.moveBehaviour.setFollowPlayer();
+        }
+
+        public Move.Behaviour followPlayer(double min, double max){
+            return super.moveBehaviour.setFollowPlayer(min, max);
+        }
+
+        public void playAnimation(NPC.Animation animation){
+            if(animation.isDeprecated()) return;
+            PacketPlayOutAnimation packet = new PacketPlayOutAnimation(entityPlayer, animation.getId());
+            NMSCraftPlayer.sendPacket(player, packet);
+        }
+
+        @Override
+        public void hit() {
+            player.playSound(getLocation(), Sound.ENTITY_PLAYER_ATTACK_STRONG, 1.0F, 1.0F);
+            playAnimation(Animation.TAKE_DAMAGE);
+        }
+
+        public void lookAt(float yaw, float pitch){
+            Validate.notNull(entityPlayer, "Failed to set look direction. The NPC has not been created yet.");
+            float a = Math.abs(yaw - super.yaw);
+            if(a > 45){
+                // DO STUFF
+            }
+            super.yaw = yaw; //yRot
+            super.pitch = pitch; //xRot
+            entityPlayer.o(yaw); //setYRot
+            entityPlayer.p(pitch); //setXRot
+        }
+
+    /*
+                Protected and private access methods
+    */
+
+        protected void reCreate(){
+            Validate.notNull(entityPlayer, "Failed to re-create the NPC. The NPC has not been created yet.");
+            boolean show = canSee;
+            hide();
+            entityPlayer = null;
+            create();
+            if(show) show();
+        }
+
+        protected void interact(@Nonnull Player player, @Nonnull NPC.Interact.ClickType clickType){
+            NPC.Events.Interact npcInteractEvent = new NPC.Events.Interact(player, this, clickType);
+            if(npcInteractEvent.isCancelled()) return;
+            if(hasGlobal()){
+                getGlobal().getClickActions(clickType).forEach(x-> x.execute(player));
+            }
+            getClickActions(clickType).forEach(x-> x.execute(player));
+        }
+
+        protected void updateGlobalLocation(NPC.Global global){
+            super.x = global.getX();
+            super.y = global.getY();
+            super.z = global.getZ();
+            super.yaw = global.getYaw();
+            super.pitch = global.getPitch();
+        }
+
+        protected void updateMove(){
+            if(player == null) return;
+            if(entityPlayer == null) return;
+            if(!canSee) return;
+            if(!hiddenToPlayer && !isInRange()){
+                hideToPlayer();
+                return;
+            }
+            if(hiddenToPlayer && isInRange() && isInView()){
+                showToPlayer();
+                return;
+            }
+            updateLook();
+            updatePlayerRotation();
+        }
+
+        private void updateLook(){
+            if(!player.getWorld().getName().equals(getWorld().getName())) return;
+            if(getFollowLookType().equals(FollowLookType.PLAYER)) lookAt(player);
+            else if(getFollowLookType().equals(FollowLookType.NEAREST_PLAYER) || getFollowLookType().equals(FollowLookType.NEAREST_ENTITY)){
                 final boolean var3 = getFollowLookType().equals(FollowLookType.NEAREST_PLAYER);
-                final Location npcLocation = getLocation();
-                for(Entity entities : world.getNearbyEntities(npcLocation, getHideDistance(), getHideDistance(), getHideDistance())){
-                    if(var3 && !(entities instanceof Player)) continue;
-                    double var1 = entities.getLocation().distance(npcLocation);
-                    if(var1 > var0) continue;
-                    near = entities;
-                    var0 = var1;
+                if(hasGlobal()){
+                    Entity near;
+                    if(var3) near = getGlobal().np();
+                    else near = getGlobal().ne();
+                    if(near != null){
+                        lookAt(near);
+                        return;
+                    }
                 }
-                if(near == null) return;
-                lookAt(near);
-            });
+                Bukkit.getScheduler().scheduleSyncDelayedTask(getNPCLib().getPlugin(), ()-> {
+                    Entity near = null;
+                    double var0 = getHideDistance();
+                    final Location npcLocation = getLocation();
+                    for(Entity entities : super.world.getNearbyEntities(npcLocation, getHideDistance(), getHideDistance(), getHideDistance())){
+                        if(var3 && !(entities instanceof Player)) continue;
+                        double var1 = entities.getLocation().distance(npcLocation);
+                        if(var1 > var0) continue;
+                        near = entities;
+                        var0 = var1;
+                    }
+                    if(near == null) return;
+                    lookAt(near);
+                    if(hasGlobal()){
+                        if(var3) getGlobal().np(near);
+                        else getGlobal().ne(near);
+                    }
+                });
+            }
         }
-    }
 
-    private void updateEquipment(){
-        List<Pair<EnumItemSlot, net.minecraft.world.item.ItemStack>> equipment = new ArrayList<>();
-        for(NPC.Slot slot : NPC.Slot.values()){
-            EnumItemSlot nmsSlot = slot.getNmsEnum(EnumItemSlot.class);
-            if(!getSlots().containsKey(slot)) getSlots().put(slot, new ItemStack(Material.AIR));
-            ItemStack item = getSlots().get(slot);
-            net.minecraft.world.item.ItemStack craftItem = null;
-            try{ craftItem = (net.minecraft.world.item.ItemStack) NMSCraftItemStack.getCraftItemStackAsNMSCopy().invoke(null, item); }
-            catch (Exception e){}
-            Validate.notNull(craftItem, "Error at NMSCraftItemStack");
-            equipment.add(new Pair(nmsSlot, craftItem));
+        protected void updateLocation(Player player){
+            if(entityPlayer == null) return;
+            NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntityTeleport(entityPlayer));
         }
-        PacketPlayOutEntityEquipment packet = new PacketPlayOutEntityEquipment(entityPlayer.ae(), equipment);
-        NMSCraftPlayer.sendPacket(player, packet);
-    }
 
-    private void updatePlayerRotation(){
-        if(entityPlayer == null) return;
-        NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntity.PacketPlayOutEntityLook(entityPlayer.ae(), (byte) ((yaw * 256 / 360)), (byte) ((pitch * 256 / 360)), false));
-        NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntityHeadRotation(entityPlayer, (byte) (yaw * 256 / 360)));
-    }
+        protected void updateScoreboard(Player player){
+            GameProfile gameProfile = NMSEntityPlayer.getGameProfile(entityPlayer);
+            Scoreboard scoreboard = null;
+            try{ scoreboard = (Scoreboard) NMSCraftScoreboard.getCraftScoreBoardGetHandle().invoke(NMSCraftScoreboard.getCraftScoreBoardClass().cast(player.getScoreboard())); }catch (Exception e){}
+            Validate.notNull(scoreboard, "Error at NMSCraftScoreboard");
+            ScoreboardTeam scoreboardTeam = scoreboard.f(getShortUUID()) == null ? new ScoreboardTeam(scoreboard, getShortUUID()) : scoreboard.f(getShortUUID());
+            scoreboardTeam.a(ScoreboardTeamBase.EnumNameTagVisibility.b); //EnumNameTagVisibility.NEVER
+            scoreboardTeam.a(getGlowingColor().getEnumChatFormat()); //setColor
+            ScoreboardTeamBase.EnumTeamPush var1 = ScoreboardTeamBase.EnumTeamPush.b; //EnumTeamPush.NEVER
+            if(isCollidable()) var1 = ScoreboardTeamBase.EnumTeamPush.a; //EnumTeamPush.ALWAYS
+            scoreboardTeam.a(var1); //setTeamPush
+            scoreboard.a(gameProfile.getName(), scoreboardTeam); //setPlayerTeam
+            NMSCraftPlayer.sendPacket(player, PacketPlayOutScoreboardTeam.a(scoreboardTeam, true));
+            NMSCraftPlayer.sendPacket(player, PacketPlayOutScoreboardTeam.a(scoreboardTeam, false));
+        }
 
-    private void updateLocation(){
-        if(entityPlayer == null) return;
-        NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntityTeleport(entityPlayer));
-    }
+        @Override
+        protected void updatePlayerRotation(){
+            if(entityPlayer == null) return;
+            NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntity.PacketPlayOutEntityLook(NMSEntityPlayer.getEntityID(entityPlayer), (byte) ((super.yaw * 256 / 360)), (byte) ((super.pitch * 256 / 360)), false));
+            NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntityHeadRotation(entityPlayer, (byte) (super.yaw * 256 / 360)));
+        }
 
-    private void updateScoreboard(){
-        GameProfile gameProfile = NMSEntityPlayer.getGameProfile(entityPlayer);
-        Scoreboard scoreboard = null;
-        try{ scoreboard = (Scoreboard) NMSCraftScoreboard.getCraftScoreBoardGetHandle().invoke(NMSCraftScoreboard.getCraftScoreBoardClass().cast(player.getScoreboard())); }catch (Exception e){}
-        Validate.notNull(scoreboard, "Error at NMSCraftScoreboard");
-        ScoreboardTeam scoreboardTeam = scoreboard.f(gameProfile.getName()) == null ? new ScoreboardTeam(scoreboard, gameProfile.getName()) : scoreboard.f(gameProfile.getName());
-        scoreboardTeam.a(ScoreboardTeamBase.EnumNameTagVisibility.b); //EnumNameTagVisibility.NEVER
-        scoreboardTeam.a(getGlowingColor().getEnumChatFormat()); //setColor
-        ScoreboardTeamBase.EnumTeamPush var1 = ScoreboardTeamBase.EnumTeamPush.b;                                       //EnumTeamPush.NEVER
-        if(isCollidable()) var1 = ScoreboardTeamBase.EnumTeamPush.a;                                                        //EnumTeamPush.ALWAYS
-        scoreboardTeam.a(var1);
-        scoreboardTeam.g().add(gameProfile.getName());
-        scoreboard.a(gameProfile.getName(), scoreboardTeam);
-        NMSCraftPlayer.sendPacket(player, PacketPlayOutScoreboardTeam.a(scoreboardTeam, true));
-        NMSCraftPlayer.sendPacket(player, PacketPlayOutScoreboardTeam.a(scoreboardTeam, false));
-    }
+        protected void updateSkin(){
+            GameProfile gameProfile = NMSEntityPlayer.getGameProfile(entityPlayer);
+            gameProfile.getProperties().get("textures").clear();
+            gameProfile.getProperties().put("textures", new Property("textures", super.attributes.skin.getTexture(), super.attributes.skin.getSignature()));
+        }
 
-    private void movePacket(double x, double y, double z) {
-        Validate.isTrue(x < 8);
-        Validate.isTrue(y < 8);
-        Validate.isTrue(z < 8);
-        NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntity.PacketPlayOutRelEntityMove(entityPlayer.ae(), (short)(x * 4096), (short)(y * 4096), (short)(z * 4096), true));
-    }
+        protected void updatePose(){
+            if(getPose().equals(NPC.Pose.SLEEPING)) entityPlayer.e(new BlockPosition(super.x, super.y, super.z));
+            entityPlayer.b(getPose().getEntityPose());
+        }
 
-    private void updateMetadata(){
-        try {
-            DataWatcher dataWatcher = entityPlayer.ai();
+        protected void move(double x, double y, double z){
+            Validate.isTrue(x < 8 && y < 8 && z < 8, "NPC cannot move 8 blocks or more at once, use teleport instead");
+            NPC.Events.Move npcMoveEvent = new NPC.Events.Move(this, new Location(super.world, super.x + x, super.y + y, super.z + z));
+            if(npcMoveEvent.isCancelled()) return;
+            super.x += x;
+            super.y += y;
+            super.z += z;
+            entityPlayer.g(super.x, super.y, super.z);
+            if(npcHologram != null) npcHologram.move(new Vector(x, y, z));
+            movePacket(x, y, z);
+        }
+
+        protected void movePacket(double x, double y, double z) {
+            Validate.isTrue(x < 8);
+            Validate.isTrue(y < 8);
+            Validate.isTrue(z < 8);
+            NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntity.PacketPlayOutRelEntityMove(NMSEntityPlayer.getEntityID(entityPlayer), (short)(x * 4096), (short)(y * 4096), (short)(z * 4096), true));
+        }
+
+        protected void updateMetadata() {
+            DataWatcher dataWatcher = NMSEntityPlayer.getDataWatcher(entityPlayer);
             entityPlayer.i(isGlowing());
-            Map<Integer, DataWatcher.Item<?>> map = (Map<Integer, DataWatcher.Item<?>>) FieldUtils.readDeclaredField(dataWatcher, "f", true);
+            Map<Integer, DataWatcher.Item<?>> map = null;
+            try{ map = (Map<Integer, DataWatcher.Item<?>>) FieldUtils.readDeclaredField(dataWatcher, "f", true); } catch (IllegalAccessException e){}
+            if(map == null) return;
             //http://wiki.vg/Entities#Entity
             //https://wiki.vg/Entity_metadata#Entity_Metadata_Format
 
@@ -1692,562 +1042,599 @@ public class NPC {
             //Player
             b = 0x00;
             //byte b = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40;
-            if(getSkin().getParts().isCape()) b = (byte) (b | 0x01);
-            if(getSkin().getParts().isJacket()) b = (byte) (b | 0x02);
-            if(getSkin().getParts().isLeftSleeve()) b = (byte) (b | 0x04);
-            if(getSkin().getParts().isRightSleeve()) b = (byte) (b | 0x08);
-            if(getSkin().getParts().isLeftPants()) b = (byte) (b | 0x10);
-            if(getSkin().getParts().isRightPants()) b = (byte) (b | 0x20);
-            if(getSkin().getParts().isHat()) b = (byte) (b | 0x40);
+            NPC.Skin.Parts parts = getSkin().getParts();
+            if(parts.isVisible(Skin.Part.CAPE)) b = (byte) (b | 0x01);
+            if(parts.isVisible(Skin.Part.JACKET)) b = (byte) (b | 0x02);
+            if(parts.isVisible(Skin.Part.LEFT_SLEEVE)) b = (byte) (b | 0x04);
+            if(parts.isVisible(Skin.Part.RIGHT_SLEEVE)) b = (byte) (b | 0x08);
+            if(parts.isVisible(Skin.Part.LEFT_PANTS)) b = (byte) (b | 0x10);
+            if(parts.isVisible(Skin.Part.RIGHT_PANTS)) b = (byte) (b | 0x20);
+            if(parts.isVisible(Skin.Part.HAT)) b = (byte) (b | 0x40);
             dataWatcher.b(DataWatcherRegistry.a.a(17), b);
             //
-            PacketPlayOutEntityMetadata metadataPacket = new PacketPlayOutEntityMetadata(entityPlayer.ae(), dataWatcher, true);
+            PacketPlayOutEntityMetadata metadataPacket = new PacketPlayOutEntityMetadata(NMSEntityPlayer.getEntityID(entityPlayer), dataWatcher, true);
             NMSCraftPlayer.sendPacket(player, metadataPacket);
-        } catch (IllegalAccessException e) {
-            e.printStackTrace();
         }
-    }
 
-    private void createPacket(){
-        NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.a, entityPlayer)); //EnumPlayerInfoAction.ADD_PLAYER
-        NMSCraftPlayer.sendPacket(player, new PacketPlayOutNamedEntitySpawn(entityPlayer));
-        shownOnTabList = true;
-        updatePlayerRotation();
-        if(isShowOnTabList()) return;
-        Bukkit.getScheduler().scheduleSyncDelayedTask(getNPCLib().getPlugin(), ()-> {
-            if(!isCreated()) return;
-            NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.e, entityPlayer)); //EnumPlayerInfoAction.REMOVE_PLAYER
-            shownOnTabList = false;
-        }, 10);
-    }
-
-    private void showToPlayer(){
-        if(!hiddenToPlayer) return;
-        createPacket();
-        hiddenToPlayer = false;
-        if(getText().size() > 0) updateText();
-        Bukkit.getScheduler().scheduleSyncDelayedTask(getNPCLib().getPlugin(), () -> {
-            if(!isCreated()) return;
-            update();
-        }, 1);
-    }
-
-    private void hideToPlayer(){
-        if(hiddenToPlayer) return;
-        if(shownOnTabList){
-            NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.e, entityPlayer)); //EnumPlayerInfoAction.REMOVE_PLAYER
-            shownOnTabList = false;
+        protected void updateEquipment(){
+            List<Pair<EnumItemSlot, net.minecraft.world.item.ItemStack>> equipment = new ArrayList<>();
+            for(NPC.Slot slot : NPC.Slot.values()){
+                EnumItemSlot nmsSlot = slot.getNmsEnum(EnumItemSlot.class);
+                if(!getSlots().containsKey(slot)) getSlots().put(slot, new ItemStack(Material.AIR));
+                ItemStack item = getSlots().get(slot);
+                net.minecraft.world.item.ItemStack craftItem = null;
+                try{ craftItem = (net.minecraft.world.item.ItemStack) NMSCraftItemStack.getCraftItemStackAsNMSCopy().invoke(null, item); }
+                catch (Exception e){}
+                Validate.notNull(craftItem, "Error at NMSCraftItemStack");
+                equipment.add(new Pair(nmsSlot, craftItem));
+            }
+            PacketPlayOutEntityEquipment packet = new PacketPlayOutEntityEquipment(NMSEntityPlayer.getEntityID(entityPlayer), equipment);
+            NMSCraftPlayer.sendPacket(player, packet);
         }
-        NMSCraftPlayer.sendPacket(player, NMSPacketPlayOutEntityDestroy.createPacket(entityPlayer.ae()));
-        if(npcHologram != null) npcHologram.hide();
-        hiddenToPlayer = true;
-    }
 
-    private void hideText(){
-        Validate.notNull(player, "Failed to update NPC text. The NPC does not have the assigned player.");
-        Validate.notNull(npcHologram, "Failed to update NPC text. The NPCHologram has not been created yet.");
-        npcHologram.hide();
-        hiddenText = true;
-    }
+        private void createPacket(){
+            try{
+                NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.a, entityPlayer)); //EnumPlayerInfoAction.ADD_PLAYER
+                NMSCraftPlayer.sendPacket(player, new PacketPlayOutNamedEntitySpawn(entityPlayer));
+            }
+            catch (Exception e){ return; }
+            shownOnTabList = true;
+            updatePlayerRotation();
+            if(isShowOnTabList()) return;
+            Bukkit.getScheduler().scheduleSyncDelayedTask(getNPCLib().getPlugin(), ()-> {
+                if(!isCreated()) return;
+                NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.e, entityPlayer)); //EnumPlayerInfoAction.REMOVE_PLAYER
+                shownOnTabList = false;
+            }, getNPCLib().getTicksUntilTabListHide());
+        }
 
-    private void showText(){
-        Validate.notNull(player, "Failed to update NPC text. The NPC does not have the assigned player.");
-        Validate.notNull(npcHologram, "Failed to update NPC text. The NPCHologram has not been created yet.");
-        if(hiddenText) return;
-        npcHologram.show();
-        hiddenText = false;
-    }
+        private void showToPlayer(){
+            if(!hiddenToPlayer) return;
+            createPacket();
+            hiddenToPlayer = false;
+            if(getText().size() > 0) updateText();
+            Bukkit.getScheduler().scheduleSyncDelayedTask(getNPCLib().getPlugin(), () -> {
+                if(!isCreated()) return;
+                update();
+            }, 1);
+        }
 
-    /**
-     * @since 2022.2
-     * @param world
-     */
-    protected void changeWorld(World world){
-        npcLib.getNPCPlayerManager(player).changeWorld(this, this.world, world);
-        this.world = world;
-    }
+        private void hideToPlayer(){
+            if(hiddenToPlayer) return;
+            if(shownOnTabList){
+                NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.e, entityPlayer)); //EnumPlayerInfoAction.REMOVE_PLAYER
+                shownOnTabList = false;
+            }
+            NMSCraftPlayer.sendPacket(player, NMSPacketPlayOutEntityDestroy.createPacket(NMSEntityPlayer.getEntityID(entityPlayer)));
+            if(npcHologram != null) npcHologram.hide();
+            hiddenToPlayer = true;
+        }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    protected void addClickAction(@Nonnull NPC.Interact.ClickAction clickAction){
-        this.clickActions.add(clickAction);
-    }
+        private void hideText(){
+            Validate.notNull(npcHologram, "Failed to update NPC text. The NPCHologram has not been created yet.");
+            npcHologram.hide();
+            hiddenText = true;
+        }
 
-    /**
-     * @since 2022.2
-     */
-    protected void clearMoveTask(){
-        this.moveTask = null;
-    }
+        private void showText(){
+            Validate.notNull(npcHologram, "Failed to update NPC text. The NPCHologram has not been created yet.");
+            if(hiddenText) return;
+            npcHologram.show();
+            hiddenText = false;
+        }
+
+        protected void changeWorld(World world){
+            super.npcLib.getNPCPlayerManager(player).changeWorld(this, super.world, world);
+            super.world = world;
+        }
+
+        protected String getReplacedCustomName(){ return getReplacedCustomName(super.attributes.getCustomTabListName()); }
+
+        protected String getReplacedCustomName(String name){
+            String id = getShortUUID();
+            String replaced = name.replaceAll("\\{id\\}", id);
+            if(replaced.length() > 16) replaced = replaced.substring(0, 15);
+            return replaced;
+        }
 
     /*
                              Getters
     */
 
-    /**
-     * @return if the NPC is in view (fov of 60) to the player.
-     * @since 2021.1
-     */
-    public boolean isInView(){
-        return isInView(60.0D);
+        public EntityPlayer getEntity(){ return this.entityPlayer; }
+
+        public String getShortUUID(){ return gameProfileID.toString().split("-")[1]; }
+
+        public boolean isInView(){
+            return isInView(60.0D);
+        }
+
+        public boolean isInView(double fov){
+            Vector dir = getLocation().toVector().subtract(player.getEyeLocation().toVector()).normalize();
+            return dir.dot(player.getEyeLocation().getDirection()) >= Math.cos(Math.toRadians(fov));
+        }
+
+        public boolean isInRange(){
+            if(!getWorld().getName().equals(player.getWorld().getName())) return false;
+            return getLocation().distance(player.getLocation()) < getHideDistance();
+        }
+
+        public Player getPlayer() {
+            return player;
+        }
+
+        public boolean isShown(){
+            return canSee;
+        }
+
+        public boolean isShownOnClient() { return canSee && !hiddenToPlayer; }
+
+        public boolean canSee() {
+            return canSee;
+        }
+
+        public boolean isHiddenText() {
+            return hiddenText;
+        }
+
+        public boolean isCreated(){
+            return entityPlayer != null;
+        }
+
+        public boolean canBeCreated(){
+            return getSkin() != null && entityPlayer == null;
+        }
+
+        protected NPC.Hologram getHologram() {
+            return npcHologram;
+        }
+
+        public boolean hasGlobal(){ return global != null; }
+
+        public NPC.Global getGlobal(){
+            return global;
+        }
+
     }
 
-    /**
-     * @return if the NPC is in view to the player in the fov.
-     * @param fov player's field of view aperture
-     * @since 2022.2
-     */
-    public boolean isInView(double fov){
-        Vector dir = getLocation().toVector().subtract(player.getEyeLocation().toVector()).normalize();
-        return dir.dot(player.getEyeLocation().getDirection()) >= Math.cos(Math.toRadians(fov));
-    }
+    public static class Global extends NPC{
 
-    /**
-     * @return if the NPC is at the hideDistance or less, and in the same world.
-     * @since 2021.1
-     */
-    public boolean isInRange(){
-        if(!getWorld().getName().equals(player.getWorld().getName())) return false;
-        return getLocation().distance(player.getLocation()) < getHideDistance();
-    }
+        private static final Integer LOOK_TICKS = 2;
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public Location getLocation(){
-        return new Location(getWorld(), getX(), getY(), getZ(), getYaw(), getPitch());
-    }
+        private final HashMap<Player, NPC.Personal> players;
+        private final HashMap<Player, NPC.Attributes> customAttributes;
+        private final Visibility visibility;
+        private final Predicate<Player> visibilityRequirement;
+        protected Entity nearestEntity, nearestPlayer;
+        protected Long lastNearestEntityUpdate, lastNearestPlayerUpdate;
+        private boolean autoCreate, autoShow;
+        private boolean ownPlayerSkin;
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public Player getPlayer() {
-        return player;
-    }
+        protected Global(@Nonnull NPCLib npcLib, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull Visibility visibility, @Nullable Predicate<Player> visibilityRequirement, @Nonnull World world, double x, double y, double z, float yaw, float pitch) {
+            super(npcLib, plugin, code, world, x, y, z, yaw, pitch);
+            Validate.notNull(visibility, "Cannot generate Global NPC instance, Visibility cannot be null.");
+            this.players = new HashMap<>();
+            this.customAttributes = new HashMap<>();
+            this.visibility = visibility;
+            this.visibilityRequirement = visibilityRequirement;
+            this.autoCreate = true;
+            this.autoShow = true;
+            np(null);
+            ne(null);
+            if(visibility.equals(Visibility.EVERYONE)) addPlayers((Collection<Player>) Bukkit.getOnlinePlayers());
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public boolean isCreated(){
-        return entityPlayer != null;
-    }
+        protected Global(@Nonnull NPCLib npcLib, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull Visibility visibility, @Nullable Predicate<Player> visibilityRequirement, @Nonnull Location location){
+            this(npcLib, plugin, code, visibility, visibilityRequirement, location.getWorld(), location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch());
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public boolean canBeCreated(){
-        return getSkin() != null && entityPlayer == null;
-    }
+        public enum Visibility{
+            EVERYONE, SELECTED_PLAYERS;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public boolean canSee() {
-        return canSee;
-    }
+        public Visibility getVisibility() {
+            return visibility;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public boolean isHiddenText() {
-        return hiddenText;
-    }
+        public boolean meetsVisibilityRequirement(@Nonnull Player player){
+            Validate.notNull(player, "Cannot verify a null Player");
+            if(visibilityRequirement == null) return true;
+            return visibilityRequirement.test(player);
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    protected HashMap<NPC.Slot, ItemStack> getEquipment(){
-        return attributes.slots;
-    }
+        public void addPlayers(@Nonnull Collection<Player> players){
+            addPlayers(players, false);
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public ItemStack getEquipment(NPC.Slot npcSlot){
-        return attributes.slots.get(npcSlot);
-    }
+        public void addPlayers(@Nonnull Collection<Player> players, boolean ignoreVisibilityRequirement){
+            Validate.notNull(players, "Cannot add a null collection of Players");
+            players.forEach(x-> addPlayer(x, ignoreVisibilityRequirement));
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public boolean isShown(){
-        return canSee;
-    }
+        public void addPlayer(@Nonnull Player player){
+            addPlayer(player, false);
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public boolean isShownOnClient() { return canSee && !hiddenToPlayer; }
+        public void addPlayer(@Nonnull Player player, boolean ignoreVisibilityRequirement){
+            Validate.notNull(player, "Cannot add a null Player");
+            if(players.containsKey(player)) return;
+            if(!ignoreVisibilityRequirement && !meetsVisibilityRequirement(player)) return;
+            NPC.Personal personal = getNPCLib().generatePlayerPersonalNPC(player, getPlugin(), getPlugin().getName().toLowerCase() + "." + "global_" + getSimpleCode(), getLocation());
+            personal.global = this;
+            players.put(player, personal);
+            customAttributes.put(player, new Attributes(null));
+            //
+            updateAttributes(player);
+            if(autoCreate) personal.create();
+            if(autoCreate && autoShow) personal.show();
+        }
 
-    /**
-     * @since 2022.2
-     * @return
-     */
-    public double getMoveSpeed() {
-        return attributes.moveSpeed;
-    }
+        public void removePlayers(@Nonnull Collection<Player> players){
+            Validate.notNull(players, "Cannot remove a null collection of Players");
+            players.forEach(x-> removePlayer(x));
+        }
 
-    /**
-     * @since 2022.2
-     * @return
-     */
-    public Move.Task getMoveTask() {
-        return moveTask;
-    }
+        public void removePlayer(@Nonnull Player player){
+            Validate.notNull(player, "Cannot remove a null Player");
+            if(!players.containsKey(player)) return;
+            NPC.Personal personal = getPersonal(player);
+            customAttributes.remove(player);
+            players.remove(player);
+            getNPCLib().removePersonalNPC(personal);
+        }
 
-    /**
-     * @since 2022.2
-     * @return
-     */
-    protected Move.Behaviour getMoveBehaviour(){ return moveBehaviour; }
+        protected void forEachActivePlayer(BiConsumer<Player, NPC.Personal> action){
+            players.keySet().stream().filter(x-> isActive(x)).forEach(x-> action.accept(x, getPersonal(x)));
+        }
 
-    /**
-     * @since 2022.2
-     * @return
-     */
-    public Move.Behaviour.Type getMoveBehaviourType(){
-        return moveBehaviour.getType();
-    }
+        public boolean hasPlayer(@Nonnull Player player){
+            Validate.notNull(player, "Cannot verify a null Player");
+            return players.containsKey(player);
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public World getWorld() {
-        return world;
-    }
+        protected boolean isActive(Player player){
+            if(!player.isOnline()) return false;
+            if(!hasPlayer(player)) return false;
+            NPC.Personal personal = getPersonal(player);
+            if(!personal.isCreated()) return false;
+            return true;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public Double getX() {
-        return x;
-    }
+        public void create(@Nonnull Player player){
+            Validate.notNull(player, "Player cannot be null");
+            updateAttributes(player);
+            getPersonal(player).create();
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public Double getY() {
-        return y;
-    }
+        public void show(@Nonnull Player player){
+            Validate.notNull(player, "Player cannot be null");
+            getPersonal(player).show();
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public Double getZ() {
-        return z;
-    }
+        public void hide(@Nonnull Player player){
+            Validate.notNull(player, "Player cannot be null");
+            getPersonal(player).hide();
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public Float getYaw() {
-        return yaw;
-    }
+        public void update(@Nonnull Player player){
+            Validate.notNull(player, "Player cannot be null");
+            updateAttributes(player);
+            getPersonal(player).update();
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public Float getPitch() {
-        return pitch;
-    }
+        public void forceUpdate(@Nonnull Player player){
+            Validate.notNull(player, "Player cannot be null");
+            updateAttributes(player);
+            getPersonal(player).forceUpdate();
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    protected NPC.Hologram getNpcHologram() {
-        return npcHologram;
-    }
+        public void updateText(@Nonnull Player player){
+            Validate.notNull(player, "Player cannot be null");
+            updateAttributes(player);
+            getPersonal(player).updateText();
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public NPCLib getNPCLib() {
-        return npcLib;
-    }
+        public void forceUpdateText(@Nonnull Player player){
+            Validate.notNull(player, "Player cannot be null");
+            updateAttributes(player);
+            getPersonal(player).forceUpdateText();
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public String getCode() {
-        return code;
-    }
+        public void destroy(@Nonnull Player player){
+            Validate.notNull(player, "Player cannot be null");
+            getPersonal(player).destroy();
+        }
 
-    /**
-     *
-     * @return
-     * @since 2022.3
-     */
-    public String getSimpleCode() {
-        String code = "" + this.code;
-        return code.replaceFirst("" + plugin.getName().toLowerCase() + "\\.", "");
-    }
+        public boolean isAutoCreate() {
+            return autoCreate;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public List<String> getText() {
-        return attributes.text;
-    }
+        public void setAutoCreate(boolean autoCreate) {
+            this.autoCreate = autoCreate;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public NPC.Skin getSkin() {
-        return attributes.skin;
-    }
+        public boolean isAutoShow() {
+            return autoShow;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public boolean isCollidable() {
-        return attributes.collidable;
-    }
+        public void setAutoShow(boolean autoShow) {
+            this.autoShow = autoShow;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public Double getHideDistance() {
-        return attributes.hideDistance;
-    }
+        public void setCustomText(Player player, List<String> lines){
+            getCustomAttributes(player).setText(lines);
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public Double getLineSpacing(){
-        return attributes.lineSpacing;
-    }
+        public void resetCustomText(Player player){
+            getCustomAttributes(player).text = null;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2022.1
-     */
-    public Vector getTextAlignment() {
-        return attributes.textAlignment;
-    }
+        public void setCustomSkin(Player player, NPC.Skin skin){ getCustomAttributes(player).setSkin(skin); }
 
-    /**
-     *
-     * @return
-     * @since 2022.1
-     */
-    public Long getInteractCooldown() {
-        return attributes.interactCooldown;
-    }
+        public void resetCustomSkin(Player player){
+            getCustomAttributes(player).skin = null;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public NPC.Color getGlowingColor() {
-        return attributes.glowingColor;
-    }
+        public void setCustomCollidable(Player player, boolean collidable){ getCustomAttributes(player).setCollidable(collidable); }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    protected HashMap<NPC.Slot, ItemStack> getSlots() {
-        return attributes.slots;
-    }
+        public void resetCustomCollidable(Player player){
+            getCustomAttributes(player).collidable = null;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public boolean isShowOnTabList() {
-        return attributes.showOnTabList;
-    }
+        public void setCustomHideDistance(Player player, double hideDistance){ getCustomAttributes(player).setHideDistance(hideDistance); }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public String getCustomTabListName() {
-        return attributes.customTabListName;
-    }
+        public void resetCustomHideDistance(Player player){
+            getCustomAttributes(player).hideDistance = null;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public boolean isGlowing() {
-        return attributes.glowing;
-    }
+        public void setCustomGlowing(Player player, boolean glowing){ getCustomAttributes(player).setGlowing(glowing); }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    public FollowLookType getFollowLookType() {
-        return attributes.followLookType;
-    }
+        public void resetCustomGlowing(Player player){
+            getCustomAttributes(player).glowing = null;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.2
-     */
-    public NPC.Pose getPose() {
-        return attributes.pose;
-    }
+        public void setCustomGlowingColor(Player player, NPC.Color color){ getCustomAttributes(player).setGlowingColor(color); }
 
-    /**
-     *
-     * @return
-     * @since 2022.1
-     */
-    public NPC.Hologram.Opacity getLineOpacity(Integer line){
-        return linesOpacity.containsKey(line) ? linesOpacity.get(line) : NPC.Hologram.Opacity.LOWEST;
-    }
+        public void resetCustomGlowingColor(Player player){
+            getCustomAttributes(player).glowingColor = null;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2022.1
-     */
-    public NPC.Hologram.Opacity getTextOpacity() {
-        return attributes.textOpacity;
-    }
+        public void setCustomFollowLookType(Player player, FollowLookType followLookType){ getCustomAttributes(player).setFollowLookType(followLookType); }
 
-    public boolean isOnFire() {
-        return attributes.onFire;
-    }
+        public void resetCustomFollowLookType(Player player){
+            getCustomAttributes(player).followLookType = null;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    private String getReplacedCustomName(){
-        return getReplacedCustomName(attributes.getCustomTabListName(), tabListID);
-    }
+        public void setCustomTabListName(Player player, String customTabListName){ getCustomAttributes(player).setCustomTabListName(customTabListName); }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    private String getReplacedCustomName(String name){
-        return getReplacedCustomName(name, tabListID);
-    }
+        public void resetCustomTabListName(Player player){
+            getCustomAttributes(player).customTabListName = null;
+        }
 
-    /**
-     *
-     * @return
-     * @since 2021.1
-     */
-    private String getReplacedCustomName(String name, UUID uuid){
-        return name.replaceAll("\\{uuid\\}", uuid.toString().split("-")[1]);
-    }
+        public void setCustomShowOnTabList(Player player, boolean showOnTabList){ getCustomAttributes(player).setShowOnTabList(showOnTabList); }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    public NPC.Attributes getAttributes() {
-        return attributes;
-    }
+        public void resetCustomShowOnTabList(Player player){
+            getCustomAttributes(player).showOnTabList = null;
+        }
 
-    /**
-     * @since 2022.3
-     * @return
-     */
-    public EntityPlayer getEntity(){
-        return this.entityPlayer;
-    }
+        public void setCustomPose(Player player, NPC.Pose pose){ getCustomAttributes(player).setPose(pose); }
 
-    /**
-     * @since 2022.3
-     * @return
-     */
-    public Plugin getPlugin() {
-        return plugin;
-    }
+        public void resetCustomPose(Player player){
+            getCustomAttributes(player).pose = null;
+        }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    protected List<NPC.Interact.ClickAction> getClickActions() {
-        return clickActions;
-    }
+        public void setCustomLineSpacing(Player player, double lineSpacing){ getCustomAttributes(player).setLineSpacing(lineSpacing); }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    protected List<NPC.Interact.ClickAction> getClickActions(@Nonnull NPC.Interact.ClickType clickType){
-        return this.clickActions.stream().filter(x-> clickType == null || x.getClickType() == null || x.getClickType().equals(clickType)).collect(Collectors.toList());
-    }
+        public void resetCustomLineSpacing(Player player){
+            getCustomAttributes(player).lineSpacing = null;
+        }
 
-    /**
-     *
-     * @since 2022.1
-     */
-    protected HashMap<Integer, NPC.Hologram.Opacity> getLinesOpacity() {
-        return linesOpacity;
-    }
+        public void setCustomTextAlignment(Player player, Vector alignment){ getCustomAttributes(player).setTextAlignment(alignment.clone()); }
 
-    @Deprecated
-    protected boolean isGlobal(){
-        return code.startsWith("global_");
+        public void resetCustomTextAlignment(Player player){
+            getCustomAttributes(player).textAlignment = null;
+        }
+
+        public void setCustomInteractCooldown(Player player, long millis){ getCustomAttributes(player).setInteractCooldown(millis); }
+
+        public void resetCustomInteractCooldown(Player player){
+            getCustomAttributes(player).interactCooldown = null;
+        }
+
+        public void setCustomTextOpacity(Player player, NPC.Hologram.Opacity opacity){ getCustomAttributes(player).setTextOpacity(opacity); }
+
+        public void resetCustomTextOpacity(Player player){
+            getCustomAttributes(player).textOpacity = null;
+        }
+
+        public void setCustomMoveSpeed(Player player, double moveSpeed){ getCustomAttributes(player).setMoveSpeed(moveSpeed); }
+
+        public void resetCustomMoveSpeed(Player player){
+            getCustomAttributes(player).moveSpeed = null;
+        }
+
+        public void setCustomOnFire(Player player, boolean onFire){ getCustomAttributes(player).setOnFire(onFire); }
+
+        public void resetCustomOnFire(Player player){
+            getCustomAttributes(player).onFire = null;
+        }
+
+        public void resetAllCustomAttributes(Player player) { customAttributes.put(player, new Attributes(null)); }
+
+        private void updateAttributes(Player player){
+            NPC.Personal personal = getPersonal(player);
+            NPC.Attributes A = getAttributes();
+            NPC.Attributes cA = getCustomAttributes(player);
+            personal.updateGlobalLocation(this);
+            if(ownPlayerSkin && !personal.getSkin().getPlayerName().equals(player.getName())) personal.setSkin(player, skin -> personal.forceUpdate());
+            else personal.setSkin(cA.skin != null ? cA.skin : A.skin);
+            personal.setCollidable(cA.collidable != null ? cA.collidable : A.collidable);
+            personal.setText(cA.text != null ? cA.text : A.text);
+            personal.setHideDistance(cA.hideDistance != null ? cA.hideDistance : A.hideDistance);
+            personal.setGlowing(cA.glowing != null ? cA.glowing : A.glowing);
+            personal.setGlowingColor(cA.glowingColor != null ? cA.glowingColor : A.glowingColor);
+            personal.setFollowLookType(cA.followLookType != null ? cA.followLookType : A.followLookType);
+            personal.setSlots((HashMap<Slot, ItemStack>) (cA.slots != null ? cA.slots : A.slots).clone());
+            personal.setCustomTabListName(cA.customTabListName != null ? cA.customTabListName : A.customTabListName);
+            personal.setShowOnTabList(cA.showOnTabList != null ? cA.showOnTabList : A.showOnTabList);
+            personal.setPose(cA.pose != null ? cA.pose : A.pose);
+            personal.setLineSpacing(cA.lineSpacing != null ? cA.lineSpacing : A.lineSpacing);
+            personal.setTextAlignment((cA.textAlignment != null ? cA.textAlignment : A.textAlignment).clone());
+            personal.setInteractCooldown(cA.interactCooldown != null ? cA.interactCooldown : A.interactCooldown);
+            personal.setTextOpacity(cA.textOpacity != null ? cA.textOpacity : A.textOpacity);
+            personal.setMoveSpeed(cA.moveSpeed != null ? cA.moveSpeed : A.moveSpeed);
+            personal.setOnFire(cA.onFire != null ? cA.onFire : A.onFire);
+            personal.setLinesOpacity((HashMap<Integer, Hologram.Opacity>) (cA.linesOpacity != null ? cA.linesOpacity : A.linesOpacity).clone());
+        }
+
+        @Override
+        public void update() {
+            forEachActivePlayer((player, npc) -> update(player));
+        }
+
+        @Override
+        public void forceUpdate() {
+            forEachActivePlayer((player, npc) -> forceUpdate(player));
+        }
+
+        @Override
+        public void updateText() {
+            forEachActivePlayer((player, npc) -> updateText(player));
+        }
+
+        @Override
+        public void forceUpdateText() {
+            forEachActivePlayer((player, npc) -> forceUpdateText(player));
+        }
+
+        @Override
+        public void destroy() {
+            players.forEach((player, npc) -> destroy(player));
+        }
+
+        @Override
+        public void teleport(World world, double x, double y, double z, float yaw, float pitch) {
+            NPC.Events.Teleport npcTeleportEvent = new NPC.Events.Teleport(this, new Location(world, x, y, z, yaw, pitch));
+            if(npcTeleportEvent.isCancelled()) return;
+            super.world = world;
+            super.x = x;
+            super.y = y;
+            super.z = z;
+            super.yaw = yaw;
+            super.pitch = pitch;
+            forEachActivePlayer((player, npc)-> npc.teleport(world, x, y, z, yaw, pitch));
+        }
+
+        @Override
+        public void lookAt(float yaw, float pitch) {
+            forEachActivePlayer((player, npc)-> npc.lookAt(yaw, pitch));
+        }
+
+        @Override
+        public void playAnimation(Animation animation) {
+            forEachActivePlayer((player, npc) -> { playAnimation(player, animation); });
+        }
+
+        public void playAnimation(Player player, Animation animation){
+            getPersonal(player).playAnimation(animation);
+        }
+
+        @Override
+        public void hit() {
+            playAnimation(Animation.TAKE_DAMAGE);
+            forEachActivePlayer((player, npc) -> player.playSound(getLocation(), Sound.ENTITY_PLAYER_ATTACK_WEAK, 1.0F, 1.0F));
+        }
+
+        @Override
+        public void setCustomTabListName(@Nullable String name) {
+            forEachActivePlayer((player, npc) -> npc.setCustomTabListName(name));
+        }
+
+        @Override
+        protected void move(double moveX, double moveY, double moveZ) {
+            Validate.isTrue(Math.abs(moveX) < 8 && Math.abs(moveY) < 8 && Math.abs(moveZ) < 8, "NPC cannot move 8 blocks or more at once, use teleport instead");
+            NPC.Events.Move npcMoveEvent = new NPC.Events.Move(this, new Location(super.world, super.x + moveX, super.y + moveY, super.z + moveZ));
+            if(npcMoveEvent.isCancelled()) return;
+            super.x += moveX;
+            super.y += moveY;
+            super.z += moveZ;
+            forEachActivePlayer((player, npc) -> npc.move(moveX, moveY, moveZ));
+        }
+
+        @Override
+        protected void updatePlayerRotation() {
+            forEachActivePlayer((player, npc) -> updatePlayerRotation(player));
+        }
+
+        protected void updatePlayerRotation(Player player){
+            getPersonal(player).updatePlayerRotation();
+        }
+
+        @Override
+        protected void updateLocation() {
+            forEachActivePlayer((player, npc) -> npc.updateLocation());
+        }
+
+        @Override
+        protected void updateMove() {
+            forEachActivePlayer((player, npc) -> npc.updateMove());
+        }
+
+        public Item dropItem(ItemStack itemStack){
+            if(itemStack == null || itemStack.getType().equals(Material.AIR)) return null;
+            return getWorld().dropItemNaturally(getLocation(), itemStack);
+        }
+
+        public Item dropItemInSlot(NPC.Slot slot){
+            ItemStack itemStack = getEquipment(slot);
+            if(itemStack == null || itemStack.getType().equals(Material.AIR)) return null;
+            clearEquipment(slot);
+            Item item = dropItem(itemStack);
+            update();
+            return item;
+        }
+
+        public Item dropItemInHand(){
+            return dropItemInSlot(Slot.MAINHAND);
+        }
+
+        public void setOwnPlayerSkin(boolean ownPlayerSkin){
+            this.ownPlayerSkin = ownPlayerSkin;
+        }
+
+        public void setOwnPlayerSkin(){
+            setOwnPlayerSkin(true);
+        }
+
+        public NPC.Personal getPersonal(Player player){
+            Validate.isTrue(players.containsKey(player), "Player is not added to this Global NPC");
+            return players.get(player);
+        }
+
+        public NPC.Attributes getCustomAttributes(Player player){
+            Validate.isTrue(customAttributes.containsKey(player), "Player is not added to this Global NPC");
+            return customAttributes.get(player);
+        }
+
+        protected void np(Entity entity){
+            this.nearestPlayer = entity;
+            this.lastNearestPlayerUpdate = System.currentTimeMillis();
+        }
+
+        protected Entity np(){
+            if(System.currentTimeMillis() - lastNearestPlayerUpdate > LOOK_TICKS * (1000 / 20)) nearestPlayer = null;
+            return nearestPlayer;
+        }
+
+        protected Entity ne(){
+            if(System.currentTimeMillis() - lastNearestEntityUpdate > LOOK_TICKS * (1000 / 20)) nearestEntity = null;
+            return nearestEntity;
+        }
+
+        protected void ne(Entity entity){
+            this.nearestEntity = entity;
+            this.lastNearestEntityUpdate = System.currentTimeMillis();
+        }
     }
 
     /*
@@ -2459,10 +1846,16 @@ public class NPC {
 
     public static class Skin {
 
-        protected static final Skin STEVE = new Skin(
-                "ewogICJ0aW1lc3RhbXAiIDogMTYyMTcxNTMxMjI5MCwKICAicHJvZmlsZUlkIiA6ICJiNTM5NTkyMjMwY2I0MmE0OWY5YTRlYmYxNmRlOTYwYiIsCiAgInByb2ZpbGVOYW1lIiA6ICJtYXJpYW5hZmFnIiwKICAic2lnbmF0dXJlUmVxdWlyZWQiIDogdHJ1ZSwKICAidGV4dHVyZXMiIDogewogICAgIlNLSU4iIDogewogICAgICAidXJsIiA6ICJodHRwOi8vdGV4dHVyZXMubWluZWNyYWZ0Lm5ldC90ZXh0dXJlLzFhNGFmNzE4NDU1ZDRhYWI1MjhlN2E2MWY4NmZhMjVlNmEzNjlkMTc2OGRjYjEzZjdkZjMxOWE3MTNlYjgxMGIiCiAgICB9CiAgfQp9",
-                "otpbxDm9B+opW7jEzZF8BVDeZSqaqdF0dyLlnlyMh7Q5ysJFDL48/9J/IOHp8JqNm1oarmVdvxrroy9dlNI2Mz4BVuJM2pcCOJwk2h+aZ4dzNZGxst+MYNPSw+i4sMoYu7OV07UVHrQffolFF7MiaBUst1hFwM07IpTE6UtIQz4rqWisXe9Iz5+ooqX4wj0IB3dPntsh6u5nVlL8acWCBDAW4YqcPt2Y4CKK+KtskjzusjqGAdEO+4lRcW1S0ldo2RNtUHEzZADWQcADjg9KKiKq9QIpIpYURIoIAA+pDGb5Q8L5O6CGI+i1+FxqXbgdBvcm1EG0OPdw9WpSqAxGGeXSwlzjILvlvBzYbd6gnHFBhFO+X7iwRJYNd+qQakjUa6ZwR8NbkpbN3ABb9+6YqVkabaEmgfky3HdORE+bTp/AT6LHqEMQo0xdNkvF9gtFci7RWhFwuTLDvQ1esby1IhlgT+X32CPuVHuxEvPCjN7+lmRz2OyOZ4REo2tAIFUKakqu3nZ0NcF98b87wAdA9B9Qyd2H/rEtUToQhpBjP732Sov6TlJkb8echGYiLL5bu/Q7hum72y4+j2GNnuRiOJtJidPgDqrYMg81GfenfPyS6Ynw6KhdEhnwmJ1FJlJhYvXZyqZwLAV1c26DNYkrTMcFcv3VXmcd5/2Zn9FnZtw=",
-                "Steve");
+        protected static final Skin STEVE;
+        protected static final HashMap<String, NPC.Skin> SKIN_CACHE;
+
+        static{
+            SKIN_CACHE = new HashMap<>();
+            STEVE = new Skin(
+                    "ewogICJ0aW1lc3RhbXAiIDogMTYyMTcxNTMxMjI5MCwKICAicHJvZmlsZUlkIiA6ICJiNTM5NTkyMjMwY2I0MmE0OWY5YTRlYmYxNmRlOTYwYiIsCiAgInByb2ZpbGVOYW1lIiA6ICJtYXJpYW5hZmFnIiwKICAic2lnbmF0dXJlUmVxdWlyZWQiIDogdHJ1ZSwKICAidGV4dHVyZXMiIDogewogICAgIlNLSU4iIDogewogICAgICAidXJsIiA6ICJodHRwOi8vdGV4dHVyZXMubWluZWNyYWZ0Lm5ldC90ZXh0dXJlLzFhNGFmNzE4NDU1ZDRhYWI1MjhlN2E2MWY4NmZhMjVlNmEzNjlkMTc2OGRjYjEzZjdkZjMxOWE3MTNlYjgxMGIiCiAgICB9CiAgfQp9",
+                    "otpbxDm9B+opW7jEzZF8BVDeZSqaqdF0dyLlnlyMh7Q5ysJFDL48/9J/IOHp8JqNm1oarmVdvxrroy9dlNI2Mz4BVuJM2pcCOJwk2h+aZ4dzNZGxst+MYNPSw+i4sMoYu7OV07UVHrQffolFF7MiaBUst1hFwM07IpTE6UtIQz4rqWisXe9Iz5+ooqX4wj0IB3dPntsh6u5nVlL8acWCBDAW4YqcPt2Y4CKK+KtskjzusjqGAdEO+4lRcW1S0ldo2RNtUHEzZADWQcADjg9KKiKq9QIpIpYURIoIAA+pDGb5Q8L5O6CGI+i1+FxqXbgdBvcm1EG0OPdw9WpSqAxGGeXSwlzjILvlvBzYbd6gnHFBhFO+X7iwRJYNd+qQakjUa6ZwR8NbkpbN3ABb9+6YqVkabaEmgfky3HdORE+bTp/AT6LHqEMQo0xdNkvF9gtFci7RWhFwuTLDvQ1esby1IhlgT+X32CPuVHuxEvPCjN7+lmRz2OyOZ4REo2tAIFUKakqu3nZ0NcF98b87wAdA9B9Qyd2H/rEtUToQhpBjP732Sov6TlJkb8echGYiLL5bu/Q7hum72y4+j2GNnuRiOJtJidPgDqrYMg81GfenfPyS6Ynw6KhdEhnwmJ1FJlJhYvXZyqZwLAV1c26DNYkrTMcFcv3VXmcd5/2Zn9FnZtw=",
+                    "Steve");
+        }
 
         private String texture;
         private String signature;
@@ -2489,13 +1882,8 @@ public class NPC {
             this(data[0], data[1], playerName);
         }
 
-        public Skin(String playerName){ this(Skin.getSkin(playerName), playerName); }
-
-        public Skin(Player player){ this(player.getName()); }
-
-        public Skin setPlayerName(String playerName){
+        public void setPlayerName(String playerName){
             this.playerName = playerName;
-            return this;
         }
 
         /**
@@ -2503,7 +1891,25 @@ public class NPC {
          * @param npc
          */
         public void applyNPC(NPC npc){
+            applyNPC(npc, false);
+        }
+
+        /**
+         * @since 2022.4
+         * @param npc
+         * @param forceUpdate
+         */
+        public void applyNPC(NPC npc, boolean forceUpdate){
             npc.setSkin(this);
+            if(forceUpdate) npc.forceUpdate();
+        }
+
+        public void applyNPCs(Collection<NPC> npcs){
+            applyNPCs(npcs, false);
+        }
+
+        public void applyNPCs(Collection<NPC> npcs, boolean forceUpdate){
+            npcs.forEach(x-> applyNPC(x, forceUpdate));
         }
 
         public String getTexture() {
@@ -2524,21 +1930,42 @@ public class NPC {
 
         public String[] getData() { return new String[]{texture, signature}; }
 
-        public static String[] getSkin(String name) {
-            Player player = Bukkit.getServer().getPlayer(name);
-            if(Bukkit.getServer().getOnlineMode() && player != null) return getSkin(player);
-            try {
-                String uuid = getUUIDString(name);
-                URL url2 = new URL("https://sessionserver.mojang.com/session/minecraft/profile/" + uuid + "?unsigned=false");
-                InputStreamReader reader2 = new InputStreamReader(url2.openStream());
-                JsonObject property = new JsonParser().parse(reader2).getAsJsonObject().get("properties").getAsJsonArray().get(0).getAsJsonObject();
-                String texture = property.get("value").getAsString();
-                String signature = property.get("signature").getAsString();
-                return new String[]{texture, signature};
-            } catch (Exception e) { return NPC.Skin.getDefaultSkin().getData(); }
+        public static void fetchSkinAsync(String playerName, Consumer<NPC.Skin> action){
+            Plugin plugin = NPCLib.getInstance().getPlugin();
+            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, ()->{
+                Player player = Bukkit.getServer().getPlayer(playerName);
+                if(Bukkit.getServer().getOnlineMode() && player != null) action.accept(new Skin(getSkinGameProfile(player), playerName));
+                else if(SKIN_CACHE.containsKey(playerName)){
+                    action.accept(SKIN_CACHE.get(playerName));
+                    return;
+                }
+                else{
+                    try {
+                        String uuid = getUUID(playerName);
+                        String[] data = getSkinMojangServer(uuid);
+                        Skin skin = new Skin(data, playerName);
+                        SKIN_CACHE.put(playerName, skin);
+                        action.accept(skin);
+                    }
+                    catch (Exception e) {
+                        action.accept(null);
+                    }
+                }
+            });
         }
 
-        private static String[] getSkin(Player player){
+        public static void fetchSkinAsync(Player player, Consumer<NPC.Skin> action){
+            fetchSkinAsync(player.getName(), action);
+        }
+
+        private static String[] getSkinPlayerName(String name) {
+            Player player = Bukkit.getServer().getPlayer(name);
+            if(Bukkit.getServer().getOnlineMode() && player != null) return getSkinGameProfile(player);
+            try { return getSkinMojangServer(getUUID(name)); }
+            catch (Exception e) { return NPC.Skin.getSteveSkin().getData(); }
+        }
+
+        private static String[] getSkinGameProfile(Player player){
             try{
                 EntityPlayer p = NMSCraftPlayer.getEntityPlayer(player);
                 GameProfile profile = NMSEntityPlayer.getGameProfile(p);
@@ -2550,17 +1977,20 @@ public class NPC {
             catch (Exception e){ return NPC.Skin.getSteveSkin().getData(); }
         }
 
-        private static UUID getUUID(String name) {
-            return UUID.fromString(getUUIDString(name));
+        private static String[] getSkinMojangServer(String uuid) throws IOException {
+            URL url2 = new URL("https://sessionserver.mojang.com/session/minecraft/profile/" + uuid + "?unsigned=false");
+            InputStreamReader reader2 = new InputStreamReader(url2.openStream());
+            JsonObject property = new JsonParser().parse(reader2).getAsJsonObject().get("properties").getAsJsonArray().get(0).getAsJsonObject();
+            String texture = property.get("value").getAsString();
+            String signature = property.get("signature").getAsString();
+            return new String[]{texture, signature};
         }
 
-        private static String getUUIDString(String name) {
-            try {
-                URL url = new URL("https://api.mojang.com/users/profiles/minecraft/" + name);
-                InputStreamReader reader = new InputStreamReader(url.openStream());
-                String uuid = new JsonParser().parse(reader).getAsJsonObject().get("id").getAsString();
-                return uuid;
-            } catch (Exception e) { return null; }
+        private static String getUUID(String name) throws IOException {
+            URL url = new URL("https://api.mojang.com/users/profiles/minecraft/" + name);
+            InputStreamReader reader = new InputStreamReader(url.openStream());
+            String uuid = new JsonParser().parse(reader).getAsJsonObject().get("id").getAsString();
+            return uuid;
         }
 
         public static Skin getSteveSkin(){ return STEVE; }
@@ -2568,9 +1998,6 @@ public class NPC {
         @Deprecated
         public static Skin getDefaultSkin() { return getSteveSkin(); }
 
-        public static Skin getPlayerSkin(Player player){ return new Skin(player); }
-
-        public static Skin getPlayerSkin(String playerName){ return new Skin(playerName); }
 
         /**
          * @since 2022.3
@@ -2807,7 +2234,7 @@ public class NPC {
                     if(type.equals(Type.FOLLOW_NPC) && followNPC == null) return;
                     Location target = null;
                     if(type.equals(Type.FOLLOW_ENTITY)) target = followEntity.getLocation();
-                    if(type.equals(Type.FOLLOW_PLAYER)) target = npc.player.getLocation();
+                    if(type.equals(Type.FOLLOW_PLAYER) && npc instanceof NPC.Personal) target = ((NPC.Personal) npc).player.getLocation();
                     if(type.equals(Type.FOLLOW_NPC)) target = followNPC.getLocation();
                     if(target == null) return;
                     if(!target.getWorld().equals(npc.getWorld())){
@@ -2851,6 +2278,7 @@ public class NPC {
 
             public Move.Behaviour setFollowEntity(Entity entity, double followMinDistance, double followMaxDistance){
                 setType(Type.FOLLOW_ENTITY);
+                this.followEntity = entity;
                 this.followMinDistance = followMinDistance;
                 this.followMaxDistance = followMaxDistance;
                 return this;
@@ -2865,7 +2293,11 @@ public class NPC {
             }
 
             public Move.Behaviour setFollowNPC(NPC npc, double followMinDistance, double followMaxDistance){
+                if(npc.equals(this.npc)) return this;
+                if(npc instanceof NPC.Personal && this.npc instanceof NPC.Global) return this;
+                if(npc instanceof NPC.Personal && this.npc instanceof NPC.Personal && !((Personal) npc).getPlayer().equals(((Personal) this.npc).getPlayer())) return this;
                 setType(Type.FOLLOW_NPC);
+                this.followNPC = npc;
                 this.followMinDistance = followMinDistance;
                 this.followMaxDistance = followMaxDistance;
                 return this;
@@ -2964,7 +2396,7 @@ public class NPC {
             }
 
             private void tick(){
-                if(!npc.isCreated()){
+                if(npc instanceof NPC.Personal && !((Personal) npc).isCreated()){
                     cancel(CancelCause.ERROR);
                     return;
                 }
@@ -3078,14 +2510,15 @@ public class NPC {
                     if(moveY < -0.4) moveY = -0.4;
                 }
                 boolean debug = false;
-                if(debug){
-                    npc.getPlayer().sendMessage("", "", "", "", "", "", "", "", "");
-                    npc.getPlayer().sendMessage("Block in leg " + blockInLeg.getType() + " " + blockInLeg.getType().isSolid());
-                    npc.getPlayer().sendMessage("Block in foot " + blockInFoot.getType() + " " + blockInFoot.getType().isSolid());
-                    npc.getPlayer().sendMessage("moveY " + moveY);
-                    if(uppingLadder) npc.getPlayer().sendMessage("§c§lUPPING LADDER");
-                    if(jumpingBlock) npc.getPlayer().sendMessage("§c§lJUMPING BLOCK");
-                    if(falling) npc.getPlayer().sendMessage("§c§lFALLING");
+                if(debug && npc instanceof NPC.Personal){
+                    Personal personal = (Personal) npc;
+                    personal.getPlayer().sendMessage("", "", "", "", "", "", "", "", "");
+                    personal.getPlayer().sendMessage("Block in leg " + blockInLeg.getType() + " " + blockInLeg.getType().isSolid());
+                    personal.getPlayer().sendMessage("Block in foot " + blockInFoot.getType() + " " + blockInFoot.getType().isSolid());
+                    personal.getPlayer().sendMessage("moveY " + moveY);
+                    if(uppingLadder) personal.getPlayer().sendMessage("§c§lUPPING LADDER");
+                    if(jumpingBlock) personal.getPlayer().sendMessage("§c§lJUMPING BLOCK");
+                    if(falling) personal.getPlayer().sendMessage("§c§lFALLING");
                 }
                 if(lookToEnd && npc.getLocation().getWorld().equals(end.getWorld())){
                     npc.lookAt(end);
@@ -3242,34 +2675,57 @@ public class NPC {
 
         private Events(){}
 
-        public static class FinishMove extends Event {
+        protected abstract static class Event extends org.bukkit.event.Event {
 
-            private static final HandlerList HANDLERS = new HandlerList();
+            private static final HandlerList HANDLERS_LIST = new HandlerList();
             private final NPC npc;
+
+            protected Event(NPC npc){
+                this.npc = npc;
+            }
+
+            public NPC getNPC() {
+                return npc;
+            }
+
+            @Override
+            public HandlerList getHandlers() {
+                return HANDLERS_LIST;
+            }
+
+            public static HandlerList getHandlerList(){
+                return HANDLERS_LIST;
+            }
+
+            protected abstract static class Player extends NPC.Events.Event{
+
+                private final org.bukkit.entity.Player player;
+
+                protected Player(org.bukkit.entity.Player player, NPC npc) {
+                    super(npc);
+                    this.player = player;
+                }
+
+                public org.bukkit.entity.Player getPlayer() {
+                    return player;
+                }
+            }
+        }
+
+        public static class FinishMove extends NPC.Events.Event {
+
             private final Location start;
             private final Location end;
             private final int taskID;
             private final NPC.Move.Task.CancelCause cancelCause;
 
             protected FinishMove(NPC npc, Location start, Location end, int taskID, NPC.Move.Task.CancelCause cancelCause) {
-                this.npc = npc;
+                super(npc);
                 this.start = start;
                 this.end = end;
                 this.taskID = taskID;
                 this.cancelCause = cancelCause;
                 Bukkit.getPluginManager().callEvent(this);
-            }
-
-            public static HandlerList getHandlerList() {
-                return HANDLERS;
-            }
-
-            public Player getPlayer() {
-                return npc.getPlayer();
-            }
-
-            public NPC getNPC() {
-                return npc;
             }
 
             public Location getStart() {
@@ -3288,42 +2744,16 @@ public class NPC {
                 return cancelCause;
             }
 
-            @Override
-            public HandlerList getHandlers() {
-                return HANDLERS;
-            }
-
         }
 
-        public static class Hide extends Event implements Cancellable {
+        public static class Hide extends NPC.Events.Event.Player implements Cancellable {
 
-            private static final HandlerList HANDLERS = new HandlerList();
-            private final Player player;
-            private final NPC npc;
             private boolean isCancelled;
 
-            protected Hide(Player player, NPC npc) {
-                this.player = player;
-                this.npc = npc;
+            protected Hide(org.bukkit.entity.Player player, NPC npc) {
+                super(player, npc);
                 this.isCancelled = false;
                 Bukkit.getPluginManager().callEvent(this);
-            }
-
-            public static HandlerList getHandlerList() {
-                return HANDLERS;
-            }
-
-            public Player getPlayer() {
-                return player;
-            }
-
-            public NPC getNPC() {
-                return npc;
-            }
-
-            @Override
-            public HandlerList getHandlers() {
-                return HANDLERS;
             }
 
             @Override
@@ -3338,37 +2768,16 @@ public class NPC {
 
         }
 
-        public static class Interact extends Event implements Cancellable{
+        public static class Interact extends NPC.Events.Event.Player implements Cancellable{
 
-            private static final HandlerList HANDLERS = new HandlerList();
-            private final Player player;
-            private final NPC npc;
             private final NPC.Interact.ClickType clickType;
             private boolean isCancelled;
 
-            protected Interact(Player player, NPC npc, NPC.Interact.ClickType clickType) {
-                this.player = player;
-                this.npc = npc;
+            protected Interact(org.bukkit.entity.Player player, NPC npc, NPC.Interact.ClickType clickType) {
+                super(player, npc);
                 this.clickType = clickType;
                 this.isCancelled = false;
                 Bukkit.getPluginManager().callEvent(this);
-            }
-
-            public static HandlerList getHandlerList() {
-                return HANDLERS;
-            }
-
-            public Player getPlayer() {
-                return player;
-            }
-
-            public NPC getNPC() {
-                return npc;
-            }
-
-            @Override
-            public HandlerList getHandlers() {
-                return HANDLERS;
             }
 
             public NPC.Interact.ClickType getClickType() {
@@ -3393,32 +2802,18 @@ public class NPC {
 
         public static class Move extends Event implements Cancellable{
 
-            private static final HandlerList HANDLERS = new HandlerList();
-            private final NPC npc;
             private final Location to;
             private boolean isCancelled;
 
             protected Move(NPC npc, Location to) {
-                this.npc = npc;
+                super(npc);
                 this.to = to;
                 this.isCancelled = false;
                 Bukkit.getPluginManager().callEvent(this);
             }
 
-            public static HandlerList getHandlerList() {
-                return HANDLERS;
-            }
-
-            public Player getPlayer() {
-                return npc.getPlayer();
-            }
-
-            public NPC getNPC() {
-                return npc;
-            }
-
             public Location getFrom(){
-                return npc.getLocation();
+                return getNPC().getLocation();
             }
 
             public Location getTo() {
@@ -3435,42 +2830,16 @@ public class NPC {
                 isCancelled = arg;
             }
 
-            @Override
-            public HandlerList getHandlers() {
-                return HANDLERS;
-            }
-
         }
 
-        public static class Show extends Event implements Cancellable {
+        public static class Show extends Event.Player implements Cancellable {
 
-            private static final HandlerList HANDLERS = new HandlerList();
-            private final Player player;
-            private final NPC npc;
             private boolean isCancelled;
 
-            protected Show(Player player, NPC npc) {
-                this.player = player;
-                this.npc = npc;
+            protected Show(org.bukkit.entity.Player player, NPC npc) {
+                super(player, npc);
                 this.isCancelled = false;
                 Bukkit.getPluginManager().callEvent(this);
-            }
-
-            public static HandlerList getHandlerList() {
-                return HANDLERS;
-            }
-
-            public Player getPlayer() {
-                return player;
-            }
-
-            public NPC getNPC() {
-                return npc;
-            }
-
-            @Override
-            public HandlerList getHandlers() {
-                return HANDLERS;
             }
 
             @Override
@@ -3487,32 +2856,18 @@ public class NPC {
 
         public static class Teleport extends Event implements Cancellable {
 
-            private static final HandlerList HANDLERS = new HandlerList();
-            private final NPC npc;
             private final Location to;
             private boolean isCancelled;
 
             protected Teleport(NPC npc, Location to) {
-                this.npc = npc;
+                super(npc);
                 this.to = to;
                 this.isCancelled = false;
                 Bukkit.getPluginManager().callEvent(this);
             }
 
-            public static HandlerList getHandlerList() {
-                return HANDLERS;
-            }
-
-            public Player getPlayer() {
-                return npc.getPlayer();
-            }
-
-            public NPC getNPC() {
-                return npc;
-            }
-
             public Location getFrom(){
-                return npc.getLocation();
+                return getNPC().getLocation();
             }
 
             public Location getTo() {
@@ -3529,41 +2884,22 @@ public class NPC {
                 isCancelled = arg;
             }
 
-            @Override
-            public HandlerList getHandlers() {
-                return HANDLERS;
-            }
-
         }
 
         public static class StartMove extends Event implements Cancellable {
 
-            private static final HandlerList HANDLERS = new HandlerList();
-            private final NPC npc;
             private final Location start;
             private final Location end;
             private final int taskID;
             private boolean isCancelled;
 
             protected StartMove(NPC npc, Location start, Location end, int taskID) {
-                this.npc = npc;
+                super(npc);
                 this.start = start;
                 this.end = end;
                 this.taskID = taskID;
                 this.isCancelled = false;
                 Bukkit.getPluginManager().callEvent(this);
-            }
-
-            public static HandlerList getHandlerList() {
-                return HANDLERS;
-            }
-
-            public Player getPlayer() {
-                return npc.getPlayer();
-            }
-
-            public NPC getNPC() {
-                return npc;
             }
 
             public Location getStart() {
@@ -3588,11 +2924,6 @@ public class NPC {
                 isCancelled = arg;
             }
 
-            @Override
-            public HandlerList getHandlers() {
-                return HANDLERS;
-            }
-
         }
     }
 
@@ -3605,17 +2936,15 @@ public class NPC {
             private final NPC npc;
             private final NPC.Interact.Actions.Type actionType;
             private final NPC.Interact.ClickType clickType;
-            private final NPC.Placeholders placeholders;
 
             protected ClickAction(NPC npc, NPC.Interact.Actions.Type actionType, NPC.Interact.ClickType clickType) {
                 this.npc = npc;
                 this.actionType = actionType;
                 this.clickType = clickType;
-                this.placeholders = new NPC.Placeholders(npc, npc.getPlayer());
             }
 
-            public String getReplacedString(String s) {
-                return placeholders.placeholder(s);
+            public String getReplacedString(Player player, String s) {
+                return NPC.Placeholders.replace(npc, player, s);
             }
 
             public NPC getNPC() {
@@ -3633,7 +2962,7 @@ public class NPC {
         }
 
         interface ClickActionInterface{
-            void execute();
+            void execute(Player player);
         }
 
         public static class Actions{
@@ -3648,25 +2977,23 @@ public class NPC {
                 RUN_PLAYER_COMMAND,
                 RUN_CONSOLE_COMMAND,
                 CONNECT_BUNGEE_SERVER,
+                TELEPORT_TO_LOCATION;
             }
 
             public static class Custom extends ClickAction{
 
-                private final CustomAction customAction;
+                private final BiConsumer<NPC, Player> customAction;
 
-                protected Custom(NPC npc, NPC.Interact.ClickType clickType, CustomAction customAction) {
+                protected Custom(NPC npc, NPC.Interact.ClickType clickType, BiConsumer<NPC, Player> customAction) {
                     super(npc, NPC.Interact.Actions.Type.CUSTOM_ACTION, clickType);
                     this.customAction = customAction;
                 }
 
                 @Override
-                public void execute() {
-                    customAction.execute();
+                public void execute(Player player) {
+                    customAction.accept(getNPC(), player);
                 }
 
-                public abstract static class CustomAction implements CustomActionInterface { }
-
-                interface CustomActionInterface{ void execute(); }
             }
 
             public static class Message extends ClickAction{
@@ -3679,8 +3006,8 @@ public class NPC {
                 }
 
                 @Override
-                public void execute() {
-                    Arrays.stream(messages).toList().forEach(x-> getNPC().getPlayer().sendMessage(getReplacedString(x)));
+                public void execute(Player player) {
+                    Arrays.stream(messages).toList().forEach(x-> player.sendMessage(getReplacedString(player,x)));
                 }
             }
 
@@ -3705,8 +3032,8 @@ public class NPC {
                 }
 
                 @Override
-                public void execute() {
-                    Bukkit.getServer().dispatchCommand(getNPC().getPlayer(), getReplacedString(super.getCommand()));
+                public void execute(Player player) {
+                    Bukkit.getServer().dispatchCommand(player, getReplacedString(player, super.getCommand()));
                 }
             }
 
@@ -3717,8 +3044,8 @@ public class NPC {
                 }
 
                 @Override
-                public void execute() {
-                    Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), getReplacedString(super.getCommand()));
+                public void execute(Player player) {
+                    Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), getReplacedString(player, super.getCommand()));
                 }
             }
 
@@ -3740,8 +3067,8 @@ public class NPC {
                 }
 
                 @Override
-                public void execute() {
-                    getNPC().getPlayer().sendTitle(getReplacedString(title), getReplacedString(subtitle), fadeIn, stay, fadeOut);
+                public void execute(Player player) {
+                    player.sendTitle("§f" + getReplacedString(player,title), getReplacedString(player,subtitle), fadeIn, stay, fadeOut);
                 }
             }
 
@@ -3755,8 +3082,8 @@ public class NPC {
                 }
 
                 @Override
-                public void execute() {
-                    getNPC().getPlayer().spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(getReplacedString(message)));
+                public void execute(Player player) {
+                    player.spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(getReplacedString(player, message)));
                 }
             }
 
@@ -3770,12 +3097,27 @@ public class NPC {
                 }
 
                 @Override
-                public void execute() {
+                public void execute(Player player) {
                     if(!Bukkit.getServer().getMessenger().isOutgoingChannelRegistered(PlayerNPCPlugin.getInstance(), "BungeeCord")) Bukkit.getServer().getMessenger().registerOutgoingPluginChannel(PlayerNPCPlugin.getInstance(), "BungeeCord");
                     ByteArrayDataOutput out = ByteStreams.newDataOutput();
                     out.writeUTF("Connect");
                     out.writeUTF(server);
-                    getNPC().getPlayer().sendPluginMessage(PlayerNPCPlugin.getInstance(), "BungeeCord", out.toByteArray());
+                    player.sendPluginMessage(PlayerNPCPlugin.getInstance(), "BungeeCord", out.toByteArray());
+                }
+            }
+
+            public static class TeleportToLocation extends ClickAction{
+
+                private final Location location;
+
+                public TeleportToLocation(NPC npc, NPC.Interact.ClickType clickType, Location location) {
+                    super(npc, Type.TELEPORT_TO_LOCATION, clickType);
+                    this.location = location;
+                }
+
+                @Override
+                public void execute(Player player) {
+                    player.teleport(location);
                 }
             }
 
@@ -3792,13 +3134,15 @@ public class NPC {
     }
 
     public static class Hologram {
-        private NPC npc;
+        private final NPC npc;
+        private final Player player;
         private Location location;
         private HashMap<Integer, List<EntityArmorStand>> lines;
         private boolean canSee;
 
-        protected Hologram(NPC npc) {
+        protected Hologram(NPC npc, Player player) {
             this.npc = npc;
+            this.player = player;
             this.canSee = false;
             create();
         }
@@ -3819,7 +3163,7 @@ public class NPC {
                 line = i;
                 break;
             }
-            NPC.Hologram.Opacity textOpacity = getLinesOpacity().containsKey(line) ? getLinesOpacity().get(line) : npc.getTextOpacity();
+            NPC.Hologram.Opacity textOpacity = getLinesOpacity().getOrDefault(line, npc.getTextOpacity());
             WorldServer world = null;
             try{ world = (WorldServer) NMSCraftWorld.getCraftWorldGetHandle().invoke(NMSCraftWorld.getCraftWorldClass().cast(location.getWorld()), new Object[0]);}catch (Exception e){}
             Validate.notNull(world, "Error at NMSCraftWorld");
@@ -3839,10 +3183,11 @@ public class NPC {
 
         protected void setLine(int line, String text) {
             if(!lines.containsKey(line)) return;
+            String replacedText = NPC.Placeholders.replace(npc, player, text);
             for(EntityArmorStand as : lines.get(line)){
                 as.e(true); //setNoGravity
                 as.j(true); //setInvisible
-                as.a(new ChatMessage(text)); //setCustomName
+                as.a(new ChatMessage(replacedText)); //setCustomName
                 as.n(text != null && text != ""); //setCustomNameVisible
             }
         }
@@ -3858,9 +3203,12 @@ public class NPC {
 
         protected void show(){
             if(canSee) return;
-            if(npc.isHiddenText()) return;
-            if(!npc.isInRange()) return;
-            if(!npc.isShownOnClient()) return;
+            if(npc instanceof NPC.Personal){
+                NPC.Personal personal = (NPC.Personal) npc;
+                if(personal.isHiddenText()) return;
+                if(!personal.isInRange()) return;
+                if(!personal.isShownOnClient()) return;
+            }
             for(Integer line : lines.keySet()){
                 for(EntityArmorStand armor : lines.get(line)){
                     NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutSpawnEntityLiving(armor));
@@ -3920,7 +3268,7 @@ public class NPC {
         }
 
         protected Player getPlayer(){
-            return npc.getPlayer();
+            return this.player;
         }
 
         protected List<String> getText(){
@@ -3970,7 +3318,7 @@ public class NPC {
                 false,
                 NPC.Color.WHITE,
                 NPC.FollowLookType.NONE,
-                "§8[NPC] {uuid}",
+                "§8[NPC] {id}",
                 false,
                 200L,
                 0.27,
@@ -3978,7 +3326,8 @@ public class NPC {
                 NPC.Pose.STANDING,
                 NPC.Hologram.Opacity.LOWEST,
                 false,
-                Move.Speed.NORMAL.doubleValue()
+                Move.Speed.NORMAL.doubleValue(),
+                new HashMap<>()
         );
 
         protected static final Double VARIABLE_MIN_LINE_SPACING = 0.27;
@@ -3986,23 +3335,24 @@ public class NPC {
         protected static final Double VARIABLE_MAX_TEXT_ALIGNMENT_XZ = 2.00;
         protected static final Double VARIABLE_MAX_TEXT_ALIGNMENT_Y = 5.00;
 
-        private NPC.Skin skin;
-        private List<String> text;
-        private HashMap<NPC.Slot, ItemStack> slots;
-        private boolean collidable;
-        private Double hideDistance;
-        private boolean glowing;
-        private NPC.Color glowingColor;
-        private NPC.FollowLookType followLookType;
-        private String customTabListName;
-        private boolean showOnTabList;
-        private Long interactCooldown;
-        private Double lineSpacing;
-        private Vector textAlignment;
-        private NPC.Pose pose;
-        private NPC.Hologram.Opacity textOpacity;
-        private boolean onFire;
-        private double moveSpeed;
+        protected NPC.Skin skin;
+        protected List<String> text;
+        protected HashMap<NPC.Slot, ItemStack> slots;
+        protected Boolean collidable;
+        protected Double hideDistance;
+        protected Boolean glowing;
+        protected NPC.Color glowingColor;
+        protected NPC.FollowLookType followLookType;
+        protected String customTabListName;
+        protected Boolean showOnTabList;
+        protected Long interactCooldown;
+        protected Double lineSpacing;
+        protected Vector textAlignment;
+        protected NPC.Pose pose;
+        protected NPC.Hologram.Opacity textOpacity;
+        protected Boolean onFire;
+        protected Double moveSpeed;
+        protected HashMap<Integer, NPC.Hologram.Opacity> linesOpacity;
 
         private Attributes(NPC.Skin skin,
                            List<String> text,
@@ -4020,7 +3370,8 @@ public class NPC {
                            NPC.Pose npcPose,
                            NPC.Hologram.Opacity textOpacity,
                            boolean onFire,
-                           Double moveSpeed
+                           Double moveSpeed,
+                           HashMap<Integer, NPC.Hologram.Opacity> linesOpacity
         ) {
             this.skin = skin;
             this.text = text;
@@ -4039,6 +3390,7 @@ public class NPC {
             this.textOpacity = textOpacity;
             this.onFire = onFire;
             this.moveSpeed = moveSpeed;
+            this.linesOpacity = linesOpacity;
             Arrays.stream(NPC.Slot.values()).filter(x-> !slots.containsKey(x)).forEach(x-> slots.put(x, new ItemStack(Material.AIR)));
         }
 
@@ -4060,15 +3412,39 @@ public class NPC {
             this.textOpacity = DEFAULT.getTextOpacity();
             this.onFire = DEFAULT.isOnFire();
             this.moveSpeed = DEFAULT.getMoveSpeed();
+            this.linesOpacity = (HashMap<Integer, Hologram.Opacity>) DEFAULT.getLinesOpacity().clone();
         }
 
-        public void applyNPC(@Nonnull NPC npc, boolean forceUpdate){
+        protected Attributes(NPC npc){
+            if(npc == null) return;
+            this.collidable = npc.getAttributes().isCollidable();
+            this.text = npc.getAttributes().getText();
+            this.hideDistance = npc.getAttributes().getHideDistance();
+            this.glowing = npc.getAttributes().isGlowing();
+            this.skin = npc.getAttributes().getSkin();
+            this.glowingColor = npc.getAttributes().getGlowingColor();
+            this.followLookType = npc.getAttributes().getFollowLookType();
+            this.slots = (HashMap<NPC.Slot, ItemStack>) npc.getAttributes().getSlots().clone();
+            this.customTabListName = npc.getAttributes().getCustomTabListName();
+            this.showOnTabList = npc.getAttributes().isShowOnTabList();
+            this.pose = npc.getAttributes().getPose();
+            this.lineSpacing = npc.getAttributes().getLineSpacing();
+            this.textAlignment = npc.getAttributes().getTextAlignment().clone();
+            this.interactCooldown = npc.getAttributes().getInteractCooldown();
+            this.textOpacity = npc.getAttributes().getTextOpacity();
+            this.onFire = npc.getAttributes().isOnFire();
+            this.moveSpeed = npc.getAttributes().getMoveSpeed();
+            this.linesOpacity = (HashMap<Integer, Hologram.Opacity>) npc.getAttributes().getLinesOpacity().clone();
+        }
+
+        public void applyNPC(@Nonnull NPC.Personal npc, boolean forceUpdate){
             applyNPC(npc);
             if(forceUpdate) npc.forceUpdate();
         }
 
-        public void applyNPC(@Nonnull NPC npc){
+        public void applyNPC(@Nonnull NPC.Personal npc){
             Validate.notNull(npc, "Cannot apply NPC.Attributes to a null NPC.");
+            npc.setSkin(this.skin);
             npc.setCollidable(this.collidable);
             npc.setText(this.text);
             npc.setHideDistance(this.hideDistance);
@@ -4085,13 +3461,14 @@ public class NPC {
             npc.setTextOpacity(this.textOpacity);
             npc.setMoveSpeed(this.moveSpeed);
             npc.setOnFire(this.onFire);
+            npc.setLinesOpacity((HashMap<Integer, Hologram.Opacity>) this.linesOpacity.clone());
         }
 
-        public void applyNPC(@Nonnull Collection<NPC> npc){
+        public void applyNPC(@Nonnull Collection<NPC.Personal> npc){
             applyNPC(npc, false);
         }
 
-        public void applyNPC(@Nonnull Collection<NPC> npc, boolean forceUpdate){
+        public void applyNPC(@Nonnull Collection<NPC.Personal> npc, boolean forceUpdate){
             Validate.notNull(npc, "Cannot apply NPC.Attributes to a null NPC.");
             npc.forEach(x-> applyNPC(x, forceUpdate));
         }
@@ -4351,12 +3728,12 @@ public class NPC {
 
         protected void setCustomTabListName(@Nonnull String customTabListName){
             if(customTabListName == null) customTabListName = DEFAULT.getCustomTabListName();
-            Validate.isTrue(customTabListName.length() <= 16, "Error setting custom tab list name. Name must be 16 or less characters.");
+            //Validate.isTrue(customTabListName.length() <= 16, "Error setting custom tab list name. Name must be 16 or less characters.");
             this.customTabListName = customTabListName;
         }
 
         public static void setDefaultCustomTabListName(@Nonnull String customTabListName){
-            Validate.isTrue(customTabListName.contains("{uuid}"), "Custom tab list name attribute must have {uuid} placeholder.");
+            Validate.isTrue(customTabListName.contains("{id}"), "Custom tab list name attribute must have {id} placeholder.");
             DEFAULT.setCustomTabListName(customTabListName);
         }
 
@@ -4501,6 +3878,29 @@ public class NPC {
             if(moveSpeed == null) moveSpeed = Move.Speed.NORMAL;
             setMoveSpeed(moveSpeed.doubleValue());
         }
+
+        public void setLineOpacity(int line, Hologram.Opacity opacity){
+            if(textOpacity == null) textOpacity = NPC.Hologram.Opacity.LOWEST;
+            this.linesOpacity.put(line, opacity);
+        }
+
+        public Hologram.Opacity getLineOpacity(int line){
+            return linesOpacity.getOrDefault(line, Hologram.Opacity.LOWEST);
+        }
+
+        protected HashMap<Integer, Hologram.Opacity> getLinesOpacity() {
+            return linesOpacity;
+        }
+
+        protected void setLinesOpacity(HashMap<Integer, Hologram.Opacity> linesOpacity) {
+            this.linesOpacity = linesOpacity;
+        }
+
+        public void resetLineOpacity(int line){
+            if(linesOpacity.containsKey(line)) linesOpacity.remove(line);
+        }
+
+        public void resetLinesOpacity(){ linesOpacity = new HashMap<>(); }
     }
 
     /**
@@ -4508,23 +3908,52 @@ public class NPC {
      */
     public static class Placeholders {
 
-        private Player player;
-        private NPC npc;
+        private static HashMap<String, BiFunction<NPC, Player, String>> placeholders;
 
-        public Placeholders(NPC npc, Player player){
-            this.npc = npc;
-            this.player = player;
+        static{
+            placeholders = new HashMap<>();
+            addPlaceholder("playerName", (npc, player) -> player.getName());
+            addPlaceholder("playerDisplayName", (npc, player) -> player.getDisplayName());
+            addPlaceholder("playerUUID", (npc, player) -> player.getUniqueId().toString());
+            addPlaceholder("playerWorld", (npc, player) -> player.getWorld().getName());
+            addPlaceholder("npcCode", (npc, player) -> npc.getCode());
+            addPlaceholder("npcSimpleCode", (npc, player) -> npc.getSimpleCode());
+            addPlaceholder("npcWorld", (npc, player) -> npc.getWorld().getName());
+            addPlaceholder("npcTabListName", (npc, player) -> npc.getCustomTabListName());
+            addPlaceholder("npcPluginName", (npc, player) -> npc.getPlugin().getDescription().getName());
+            addPlaceholder("npcPluginVersion", (npc, player) -> npc.getPlugin().getDescription().getVersion());
+            addPlaceholder("serverOnlinePlayers", (npc, player) -> "" + npc.getPlugin().getServer().getOnlinePlayers().size());
+            addPlaceholder("serverMaxPlayers", (npc, player) -> "" + npc.getPlugin().getServer().getMaxPlayers());
         }
 
-        public String placeholder(String string){
-            string = r(string, "playerName", player.getName());
-            string = r(string, "playerUUID", player.getUniqueId().toString());
-            string = r(string, "npcCode", npc.getCode());
-            string = r(string, "world", npc.getWorld().getName());
+        private Placeholders(){}
+
+        public static String format(String s) { return "{" + s + "}"; }
+
+        public static void addPlaceholder(@Nonnull String placeholder, @Nonnull BiFunction<NPC, Player, String> replacement){
+            Validate.notNull(placeholder, "Placeholder cannot be null.");
+            Validate.notNull(replacement, "Replacement cannot be null.");
+            Validate.isTrue(!placeholders.containsKey(placeholder), "Placeholder \"" + placeholder + "\" settled previously");
+            placeholders.put(placeholder, replacement);
+        }
+
+        public static boolean existsPlaceholder(@Nonnull String placeholder){
+            Validate.notNull(placeholder, "Placeholder cannot be null.");
+            return placeholders.containsKey(placeholder);
+        }
+
+        public static String replace(@Nonnull NPC npc, @Nonnull Player player, @Nonnull String string){
+            Validate.notNull(npc, "NPC cannot be null.");
+            Validate.notNull(player, "Player cannot be null.");
+            Validate.notNull(string, "String cannot be null.");
+            for(String placeholder : placeholders.keySet()){
+                if(!string.contains("{" + placeholder + "}")) continue;
+                string = r(string, placeholder, placeholders.get(placeholder).apply(npc, player));
+            }
             return string;
         }
 
-        private String r(String string, String placeHolder, String value){
+        private static String r(String string, String placeHolder, String value){
             return string.replaceAll("\\{" + placeHolder +"\\}", value);
         }
 

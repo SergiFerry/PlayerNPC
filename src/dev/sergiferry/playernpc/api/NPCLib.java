@@ -1,7 +1,9 @@
 package dev.sergiferry.playernpc.api;
 
 import dev.sergiferry.playernpc.PlayerNPCPlugin;
+import dev.sergiferry.playernpc.nms.minecraft.NMSEntityPlayer;
 import dev.sergiferry.playernpc.nms.minecraft.NMSNetworkManager;
+import dev.sergiferry.spigot.nms.NMSUtils;
 import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -13,6 +15,7 @@ import org.apache.commons.lang.Validate;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -20,11 +23,14 @@ import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.plugin.Plugin;
 
 import javax.annotation.Nonnull;
-import java.lang.reflect.Field;
+import javax.annotation.Nullable;
 import java.util.*;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
@@ -40,286 +46,211 @@ public class NPCLib implements Listener {
 
     private final Plugin plugin;
     private final HashMap<Player, PlayerManager> playerManager;
+    private final HashMap<String, NPC.Global> globalNPCs;
     private UpdateLookType updateLookType;
     private Integer updateLookTicks;
+    private Integer ticksUntilTabListHide;
     private Integer taskID;
 
-    /**
-     * The {@link NPCLib} instance must be called thought {@link NPCLib#getInstance()}
-     *
-     * @param plugin is the {@link PlayerNPCPlugin} instance
-     *
-     * @see NPCLib#getInstance()
-     */
     private NPCLib(@Nonnull PlayerNPCPlugin plugin){
+        instance = this;
         this.plugin = plugin;
         this.playerManager = new HashMap<>();
-        this.updateLookType = UpdateLookType.MOVE_EVENT;
+        this.globalNPCs = new HashMap<>();
         this.updateLookTicks = 5;
-        instance = this;
+        this.ticksUntilTabListHide = 10;
+        setUpdateLookType(UpdateLookType.MOVE_EVENT);
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
     }
 
-    /**
-     * Generates the {@link NPC} instance.
-     *
-     * @param player the Player who will see the NPC
-     * @param code the id of the NPC to access it later
-     * @param location the location that the NPC will spawn
-     */
-    public NPC generateNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull Location location){
+    public NPC.Personal generatePersonalNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull Location location){
         Validate.notNull(plugin, "You cannot create an NPC with a null Plugin");
         Validate.notNull(player, "You cannot create an NPC with a null Player");
         Validate.notNull(code, "You cannot create an NPC with a null code");
         Validate.notNull(location, "You cannot create an NPC with a null Location");
         Validate.notNull(location.getWorld(), "You cannot create NPC with a null world");
         Validate.isTrue(!code.toLowerCase().startsWith("global_"), "You cannot create NPC with global tag");
-        return generatePlayerNPC(player, plugin, a(plugin, code), location);
+        return generatePlayerPersonalNPC(player, plugin, a(plugin, code), location);
     }
 
-    @Deprecated
-    public NPC generateNPC(Player player, String code, Location location){
-        return generateNPC(player, getPlugin(), code, location);
+    public NPC.Global generateGlobalNPC(@Nonnull Plugin plugin, @Nonnull String code, @Nonnull NPC.Global.Visibility visibility, @Nullable Predicate<Player> visibilityRequirement, @Nonnull Location location){
+        Validate.notNull(plugin, "You cannot create an NPC with a null Plugin");
+        Validate.notNull(code, "You cannot create an NPC with a null code");
+        Validate.notNull(visibility, "You cannot create an NPC with a null visibility");
+        Validate.notNull(location, "You cannot create an NPC with a null Location");
+        Validate.notNull(location.getWorld(), "You cannot create NPC with a null world");
+        return generatePlayerGlobalNPC(plugin, a(plugin, code), visibility, visibilityRequirement, location);
     }
 
-    private NPC generatePlayerNPC(Player player, Plugin plugin, String code, Location location){
-        NPC old = getNPCPlayerManager(player).getNPC(code);
+    public NPC.Global generateGlobalNPC(@Nonnull Plugin plugin, @Nonnull String code, @Nonnull NPC.Global.Visibility visibility, @Nonnull Location location){
+        return generateGlobalNPC(plugin, code, visibility, null, location);
+    }
+
+    public NPC.Global generateGlobalNPC(@Nonnull Plugin plugin, @Nonnull String code, @Nullable Predicate<Player> visibilityRequirement, @Nonnull Location location){
+        return generateGlobalNPC(plugin, code, NPC.Global.Visibility.EVERYONE, visibilityRequirement, location);
+    }
+
+    public NPC.Global generateGlobalNPC(@Nonnull Plugin plugin, @Nonnull String code, @Nonnull Location location){
+        return generateGlobalNPC(plugin, code, NPC.Global.Visibility.EVERYONE, null, location);
+    }
+
+    protected NPC.Personal generatePlayerPersonalNPC(Player player, Plugin plugin, String code, Location location){
+        NPC.Personal old = getNPCPlayerManager(player).getNPC(code);
         if(old != null) return old;
-        return new NPC(this, player, plugin, code, location);
+        return new NPC.Personal(this, player, plugin, code, location);
     }
 
-    /**
-     * Get the {@link NPC} instance of a {@link Player} with specific ID.
-     *
-     * @return The {@link NPC} instance.
-     *
-     * @param player the Player who sees the NPC
-     * @param id the id of the NPC
-     */
-    public NPC getNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String id){
+    private NPC.Global generatePlayerGlobalNPC(Plugin plugin, String code, NPC.Global.Visibility visibility, Predicate<Player> visibilityRequirement, Location location){
+        NPC.Global old = globalNPCs.get(code);
+        if(old != null) return old;
+        NPC.Global global = new NPC.Global(this, plugin, code, visibility, visibilityRequirement, location);
+        globalNPCs.put(code, global);
+        return global;
+    }
+
+    public NPC.Personal getPersonalNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String id){
         Validate.notNull(player, "Player must not be null");
         Validate.notNull(plugin, "Plugin must not be null");
         Validate.notNull(id, "NPC id must not be null");
         return getNPCPlayerManager(player).getNPC(a(plugin, id));
     }
 
+    public NPC.Global getGlobalNPC(@Nonnull Plugin plugin, @Nonnull String id){
+        Validate.notNull(plugin, "Plugin must not be null");
+        Validate.notNull(id, "NPC id must not be null");
+        return globalNPCs.get(a(plugin, id));
+    }
+
     @Deprecated
-    public NPC getNPC(@Nonnull Player player, @Nonnull String id){
+    public NPC.Personal getPersonalNPC(@Nonnull Player player, @Nonnull String id){
         Validate.notNull(player, "Player must not be null");
         Validate.notNull(id, "NPC id must not be null");
         return getNPCPlayerManager(player).getNPC(id);
     }
 
-    /**
-     * Get a {@link Set} of {@link NPC} instances of a {@link Player} with the prefix on the ID.
-     *
-     * @return A {@link Set} of {@link NPC} instances.
-     *
-     * @param player the Player who sees the NPCs
-     * @param prefix the prefix that have all the NPCs
-     */
-    public Set<NPC> getNPCs(@Nonnull Player player, @Nonnull String prefix){
-        Validate.notNull(player, "Player must not be null");
-        Validate.notNull(prefix, "Prefix must not be null");
-        return getNPCPlayerManager(player).getNPCs(prefix);
+    @Deprecated
+    public NPC.Global getGlobalNPC(@Nonnull String id){
+        Validate.notNull(id, "NPC id must not be null");
+        return globalNPCs.get(id);
     }
 
-    /**
-     * Get a {@link Set} of {@link NPC} instances of a {@link Player} created by the {@link Plugin}.
-     *
-     * @return A {@link Set} of {@link NPC} instances.
-     *
-     * @param player the Player who sees the NPCs
-     * @param plugin the plugin that created that NPCs
-     */
-    public Set<NPC> getNPCs(@Nonnull Player player, @Nonnull Plugin plugin){
+    public Set<NPC.Personal> getPersonalNPCs(@Nonnull Player player, @Nonnull Plugin plugin){
         Validate.notNull(player, "Player must not be null");
         Validate.notNull(plugin, "Plugin must not be null");
-        return getNPCs(player, plugin);
+        return getNPCPlayerManager(player).getNPCs(plugin);
     }
 
-    /**
-     * Get a {@link Set} of {@link NPC} instances of a {@link Player} that are at on specific {@link World}.
-     *
-     * @return A {@link Set} of {@link NPC} instances.
-     *
-     * @param player the Player who sees the NPC
-     * @param world the world where are the NPCs
-     */
-    public Set<NPC> getNPCs(@Nonnull Player player, @Nonnull World world){
+    public Set<NPC.Personal> getPersonalNPCs(@Nonnull Plugin plugin){
+        Validate.notNull(plugin, "Plugin must not be null");
+        Set<NPC.Personal> npcs = new HashSet<>();
+        Bukkit.getOnlinePlayers().forEach(x-> npcs.addAll(getPersonalNPCs(x, plugin)));
+        return npcs;
+    }
+
+    public Set<NPC.Personal> getPersonalNPCs(@Nonnull Player player, @Nonnull World world){
         Validate.notNull(player, "Player must not be null");
         Validate.notNull(world, "World must not be null");
         return getNPCPlayerManager(player).getNPCs(world);
     }
 
-    /**
-     * Get a {@link Set} of {@link NPC} instances of a {@link Player} with all the NPCs.
-     *
-     * @return A {@link Set} of {@link NPC} instances.
-     *
-     * @param player the Player who sees the NPC
-     */
-    public Set<NPC> getAllNPCs(@Nonnull Player player){
+    public Set<NPC.Personal> getAllPersonalNPCs(@Nonnull Player player){
         return getNPCPlayerManager(player).getNPCs();
     }
 
+    public Set<NPC.Global> getAllGlobalNPCs(){
+        return Set.copyOf(globalNPCs.values());
+    }
 
-    /**
-     * Detects if the {@link Player} has an {@link NPC} with the specific ID.
-     *
-     * @return A {@link Boolean} if the {@link Player} has an {@link NPC} with the specific ID.
-     *
-     * @param player the Player who sees the NPC
-     * @param id the id of the NPC
-     */
-    public boolean hasNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String id){
+    public Set<NPC.Global> getAllGlobalNPCs(@Nonnull Plugin plugin){
+        Validate.notNull(plugin, "Plugin must not be null");
+        Set<NPC.Global> npcs = new HashSet<>();
+        globalNPCs.keySet().stream().filter(x-> x.startsWith(plugin.getName().toLowerCase() + ".")).forEach(x-> npcs.add(getGlobalNPC(x)));
+        return npcs;
+    }
+
+    public boolean hasPersonalNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String id){
         Validate.notNull(player, "Player must not be null");
         Validate.notNull(plugin, "Plugin must not be null");
         Validate.notNull(id, "NPC id must not be null");
-        return getNPC(player, plugin, id) != null;
+        return getPersonalNPC(player, plugin, id) != null;
     }
 
     @Deprecated
-    public boolean hasNPC(@Nonnull Player player, @Nonnull String id){
+    public boolean hasPersonalNPC(@Nonnull Player player, @Nonnull String id){
         Validate.notNull(player, "Player must not be null");
         Validate.notNull(id, "NPC id must not be null");
-        return getNPC(player, id) != null;
+        return getPersonalNPC(player, id) != null;
     }
 
-    /**
-     * Removes the {@link NPC} instance of a {@link Player} with specific ID.
-     *
-     * @return The {@link NPC} instance.
-     *
-     * @param player the Player who sees the NPC
-     * @param id the id of the NPC
-     */
-    public NPC removeNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String id){
+    public void removePersonalNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String id){
         Validate.notNull(player, "Player must not be null");
         Validate.notNull(player, "Plugin must not be null");
         Validate.notNull(id, "NPC id must not be null");
-        return removeNPC(player, getNPC(player, plugin, id));
+        removePersonalNPC(getPersonalNPC(player, plugin, id));
     }
 
-    /**
-     * Removes the {@link NPC} instance of a {@link Player}.
-     *
-     * @return The {@link NPC} instance.
-     *
-     * @param player the Player who sees the NPC
-     * @param npc the NPC instance
-     */
-    public NPC removeNPC(@Nonnull Player player, @Nonnull NPC npc){
-        Validate.notNull(player, "Player must not be null");
+    public void removePersonalNPC(@Nonnull NPC.Personal npc){
+        Validate.notNull(npc, "NPC was not found");
+        if(npc.hasGlobal() && npc.getGlobal().hasPlayer(npc.getPlayer())){
+            npc.getGlobal().removePlayer(npc.getPlayer());
+            return;
+        }
+        npc.destroy();
+        getNPCPlayerManager(npc.getPlayer()).removeNPC(npc.getCode());
+    }
+
+    public void removeGlobalNPC(@Nonnull NPC.Global npc){
         Validate.notNull(npc, "NPC was not found");
         npc.destroy();
-        getNPCPlayerManager(player).removeNPC(npc.getCode());
-        return npc;
+        globalNPCs.remove(npc.getCode());
     }
 
-    /**
-     * Get a {@link Set} of {@link NPC} instances with the specific ID.
-     * This will return all the NPCs even they are not from the same Player.
-     *
-     * @return A {@link Set} of {@link NPC} instances.
-     *
-     * @param code the ID of the NPCs
-     */
-    public Set<NPC> getGlobalNPC(@Nonnull Plugin plugin, @Nonnull String code){
-        Validate.notNull(plugin, "Plugin cannot be null");
-        Validate.notNull(code, "Code cannot be null");
-        Set<NPC> npc = new HashSet<>();
-        Bukkit.getOnlinePlayers().stream().filter(x-> getNPC(x, plugin, code) != null).forEach(x-> npc.add(getNPC(x, plugin, code)));
-        return npc;
+    public void removeNPC(@Nonnull NPC npc){
+        Validate.notNull(npc, "NPC was not found");
+        if(npc instanceof NPC.Personal) removePersonalNPC((NPC.Personal) npc);
+        else if(npc instanceof NPC.Global) removeGlobalNPC((NPC.Global) npc);
     }
 
-    /**
-     * In order to do some recurrent actions on the {@link NPC} you
-     * can choose between doing it every certain ticks or
-     * doing it when player is moving listening {@link PlayerMoveEvent}
-     *
-     * @param updateLookType the type of update
-     * @see NPCLib#setUpdateLookTicks(Integer) 
-     * @see NPCLib#getUpdateLookType() 
-     */
     public void setUpdateLookType(@Nonnull UpdateLookType updateLookType) {
         Validate.notNull(updateLookType, "Update look type must be not null");
         this.updateLookType = updateLookType;
         if(taskID != null) getPlayerNPCPlugin().getServer().getScheduler().cancelTask(taskID);
         if(updateLookType.equals(UpdateLookType.TICKS)){
             taskID = getPlayerNPCPlugin().getServer().getScheduler().runTaskTimerAsynchronously(getPlayerNPCPlugin(), () -> {
-                Bukkit.getOnlinePlayers().forEach(x-> getAllNPCs(x).forEach(y-> y.updateMove()));
+                Bukkit.getOnlinePlayers().forEach(x-> getAllPersonalNPCs(x).forEach(y-> y.updateMove()));
             }, updateLookTicks, updateLookTicks).getTaskId();
         }
     }
 
-    /**
-     * Sets the interval of ticks between every check of movement.
-     * By default, is 5 ticks.
-     * <p>Less ticks will produce more lag</p>
-     *
-     * @param ticks the amount of ticks
-     * @since 2021.2
-     * @see NPCLib#setUpdateLookType(UpdateLookType) 
-     */
     public void setUpdateLookTicks(Integer ticks){
+        if(ticks < 1) ticks = 1;
         this.updateLookTicks = ticks;
         if(updateLookType.equals(UpdateLookType.TICKS)) setUpdateLookType(UpdateLookType.TICKS);                        // This will update the ticks on the active run task.
     }
 
-    /**
-     * When the player is far enough, the NPC will temporally hide, in order
-     * to be more efficient. And when the player approach, the NPC will be unhidden.
-     * You can change each NPC Hide Distance, but by default, will be this value.
-     * <p>This method is Deprecated. Use {@link NPC.Attributes#getDefaultHideDistance()}
-     *
-     * @return {@link Double} the distance in blocks
-     * @since 2021.1
-     * @see NPCLib#setDefaultHideDistance(Double) 
-     * @see NPC#setHideDistance(double) 
-     * @see NPC#getHideDistance() 
-     */
+    public Integer getTicksUntilTabListHide() {
+        return ticksUntilTabListHide;
+    }
+
+    public void setTicksUntilTabListHide(Integer ticksUntilTabListHide) {
+        if(ticksUntilTabListHide < 1) ticksUntilTabListHide = 1;
+        this.ticksUntilTabListHide = ticksUntilTabListHide;
+    }
+
     @Deprecated
     public Double getDefaultHideDistance() {
         return NPC.Attributes.getDefaultHideDistance();
     }
 
-    /**
-     * When the player is far enough, the NPC will temporally hide, in order
-     * to be more efficient. And when the player approach, the NPC will be unhidden.
-     * You can change each NPC Hide Distance, but by default, will be this value.
-     *
-     * <p>This method is Deprecated. Use {@link NPC.Attributes#setDefaultHideDistance(double)}
-     * @since 2021.1
-     *
-     * @param hideDistance the distance in blocks
-     * @see NPCLib#getDefaultHideDistance()
-     * @see NPC#setHideDistance(double)
-     * @see NPC#getHideDistance()
-     */
     @Deprecated
     public void setDefaultHideDistance(Double hideDistance) {
         NPC.Attributes.setDefaultHideDistance(hideDistance);
     }
 
-    /**
-     *
-     * @since 2022.1
-     * @return {@link NPC.Attributes#getDefault()}
-     */
     public NPC.Attributes getDefaults(){
         return NPC.Attributes.getDefault();
     }
 
-    /**
-     * In order to do some recurrent actions on the {@link NPC} you
-     * can choose between doing it every certain ticks or
-     * doing it when player is moving listening {@link PlayerMoveEvent}
-     *
-     * @return {@link UpdateLookType} if using ticks or PlayerMoveEvent
-     * @since 2021.2
-     * @see NPCLib#setUpdateLookType(UpdateLookType) 
-     */
     public UpdateLookType getUpdateLookType() {
         return updateLookType;
     }
@@ -335,7 +266,12 @@ public class NPCLib implements Listener {
     }
 
     private void onEnable(PlayerNPCPlugin playerNPCPlugin){
-        playerNPCPlugin.getServer().getOnlinePlayers().forEach(x-> join(x));
+        Bukkit.getScheduler().runTaskLater(getPlugin(), ()-> { playerNPCPlugin.getServer().getOnlinePlayers().forEach(x-> {
+            join(x);
+            for(NPC.Global global : getAllGlobalNPCs()){
+                if(global.isActive(x)) global.forceUpdate();
+            }
+        }); }, 1L);
     }
 
     private void onDisable(PlayerNPCPlugin playerNPCPlugin){
@@ -355,9 +291,14 @@ public class NPCLib implements Listener {
         PlayerManager npcPlayerManager = getNPCPlayerManager(player);
         PlayerManager.PacketReader reader = npcPlayerManager.getPacketReader();
         reader.inject();
+        for(NPC.Global global : getAllGlobalNPCs()){
+            if(!global.getVisibility().equals(NPC.Global.Visibility.EVERYONE)) continue;
+            global.addPlayer(player);
+        }
     }
 
     private void quit(Player player){
+        getAllGlobalNPCs().forEach(x-> x.removePlayer(player));
         PlayerManager npcPlayerManager = getNPCPlayerManager(player);
         npcPlayerManager.destroyAll();
         npcPlayerManager.getPacketReader().unInject();
@@ -387,6 +328,16 @@ public class NPCLib implements Listener {
         Player player = event.getPlayer();
         getNPCPlayerManager(player).updateMove();
     }
+    
+    @EventHandler
+    private void onPluginDisable(PluginDisableEvent event){
+        Plugin plugin = event.getPlugin();
+        Set<NPC.Global> globals = getAllGlobalNPCs(plugin);
+        if(!globals.isEmpty()) globals.forEach(x-> removeGlobalNPC(x));
+        //
+        Set<NPC.Personal> npc = getPersonalNPCs(plugin);
+        if(!npc.isEmpty())  npc.forEach(x-> removePersonalNPC(x));;
+    }
 
     public static NPCLib getInstance(){
         return instance;
@@ -397,13 +348,19 @@ public class NPCLib implements Listener {
         TICKS,
     }
 
+    public enum TabListIDType{
+        RANDOM_UUID,
+        NPC_CODE,
+        NPC_SIMPLE_CODE
+    }
+
     protected class PlayerManager {
 
         private final NPCLib npcLib;
         private final Player player;
-        private final HashMap<String, NPC> npcs;
+        private final HashMap<String, NPC.Personal> npcs;
         private final PlayerManager.PacketReader packetReader;
-        protected final Map<World, Set<NPC>> hidden;
+        private final Map<World, Set<NPC.Personal>> hidden;
         private final Long lastEnter;
 
         protected PlayerManager(NPCLib npcLib, Player player) {
@@ -415,20 +372,16 @@ public class NPCLib implements Listener {
             this.lastEnter = System.currentTimeMillis();
         }
 
-        protected void set(String s, NPC npc){
+        protected void set(String s, NPC.Personal npc){
             npcs.put(s, npc);
         }
 
-        protected NPC getNPC(Integer entityID){
-            return npcs.values().stream().filter(x-> x.isCreated() && x.getEntity().ae() == entityID).findAny().orElse(null);
+        protected NPC.Personal getNPC(Integer entityID){
+            return npcs.values().stream().filter(x-> x.isCreated() && NMSEntityPlayer.getEntityID(x.getEntity()).equals(entityID)).findAny().orElse(null);
         }
 
         protected void removeNPC(String code){
             npcs.remove(code);
-        }
-
-        protected Set<NPC> getNPCs(String prefix){
-            return getNpcs().values().stream().filter(x-> x.getCode().startsWith(prefix)).collect(Collectors.toSet());
         }
 
         protected void updateMove(){
@@ -438,65 +391,51 @@ public class NPCLib implements Listener {
         }
 
         protected void destroyWorld(World world){
-            Set<NPC> r = new HashSet<>();
-            npcs.values().stream().filter(x-> x.getWorld().getName().equals(world.getName())).forEach(x->{
-                if(x.canSee()){
-                    x.hide();
-                    r.add(x);
-                }
+            Set<NPC.Personal> r = new HashSet<>();
+            npcs.values().stream().filter(x-> x.canSee() && x.getWorld().getName().equals(world.getName())).forEach(x->{
+                x.hide();
+                r.add(x);
             });
             hidden.put(world, r);
         }
 
         protected void showWorld(World world){
             if(!hidden.containsKey(world)) return;
-            hidden.get(world).forEach(x-> {
-                if(x.isCreated()) x.show();
-            });
+            hidden.get(world).stream().filter(x-> x.isCreated()).forEach(x-> x.show());
             hidden.remove(world);
         }
 
-        protected void changeWorld(NPC npc, World from, World to){
-            if(hidden.containsKey(from)){
-                if(hidden.get(from).contains(npc)){
-                    hidden.get(from).remove(npc);
-                    npc.show();
-                }
-            }
+        protected void changeWorld(NPC.Personal npc, World from, World to){
+            if(!hidden.containsKey(from)) return;
+            if(!hidden.get(from).contains(npc)) return;
+            hidden.get(from).remove(npc);
+            npc.show();
         }
 
         protected void destroyAll(){
-            Set<NPC> destroy = new HashSet<>();
+            Set<NPC.Personal> destroy = new HashSet<>();
             destroy.addAll(npcs.values());
-            destroy.stream().forEach(x-> {
-                if(x.isCreated()){
-                    x.destroy();
-                }
-            });
+            destroy.stream().filter(x-> x.isCreated()).forEach(x-> x.destroy());
             npcs.clear();
         }
 
-        protected Set<NPC> getNPCs(World world){
+        protected Set<NPC.Personal> getNPCs(World world){
             Validate.notNull(world, "World must be not null");
             return npcs.values().stream().filter(x-> x.getWorld().equals(world)).collect(Collectors.toSet());
         }
 
-        protected Set<NPC> getNPCs(Plugin plugin){
+        protected Set<NPC.Personal> getNPCs(Plugin plugin){
             Validate.notNull(plugin, "Plugin must be not null");
             return npcs.values().stream().filter(x-> x.getPlugin().equals(plugin)).collect(Collectors.toSet());
         }
 
-        protected Set<NPC> getNPCs(){
+        protected Set<NPC.Personal> getNPCs(){
             return  npcs.values().stream().collect(Collectors.toSet());
         }
 
-        protected NPC getNPC(String s){
+        protected NPC.Personal getNPC(String s){
             if(!npcs.containsKey(s)) return null;
             return npcs.get(s);
-        }
-
-        private HashMap<String, NPC> getNpcs() {
-            return npcs;
         }
 
         protected NPCLib getNPCLib() {
@@ -551,11 +490,11 @@ public class NPCLib implements Listener {
             private void readPacket(Packet<?> packet) {
                 if(packet == null) return;
                 if (!packet.getClass().getSimpleName().equalsIgnoreCase("PacketPlayInUseEntity")) return;
-                int id = (int) getValue(packet, "a");
+                int id = (int) NMSUtils.getValue(packet, "a");
                 NPC.Interact.ClickType clickType;
                 try{
-                    Object action = getValue(packet, "b");
-                    EnumHand hand = (EnumHand) getValue(action, "a");
+                    Object action = NMSUtils.getValue(packet, "b");
+                    EnumHand hand = (EnumHand) NMSUtils.getValue(action, "a");
                     if(hand != null) clickType = NPC.Interact.ClickType.RIGHT_CLICK;
                     else clickType = NPC.Interact.ClickType.LEFT_CLICK;
                 }
@@ -564,29 +503,18 @@ public class NPCLib implements Listener {
             }
 
             private void interact(Integer id, NPC.Interact.ClickType clickType){
-                NPC npc = getNPCLib().getNPCPlayerManager(getPlayerManager().getPlayer()).getNPC(id);
+                NPC.Personal npc = getNPCLib().getNPCPlayerManager(getPlayerManager().getPlayer()).getNPC(id);
                 if(npc == null) return;
                 interact(npc, clickType);
             }
 
-            private void interact(NPC npc, NPC.Interact.ClickType clickType){
+            private void interact(NPC.Personal npc, NPC.Interact.ClickType clickType){
                 if(npc == null) return;
                 if(lastClick.containsKey(npc) && System.currentTimeMillis() - lastClick.get(npc) < npc.getInteractCooldown()) return;
                 lastClick.put(npc, System.currentTimeMillis());
                 Bukkit.getScheduler().scheduleSyncDelayedTask(npcPlayerManager.getNPCLib().getPlugin(), ()-> {
                     npc.interact(npcPlayerManager.getPlayer(), clickType);
                 }, 1);
-            }
-
-            private Object getValue(Object instance, String name) {
-                Object result = null;
-                try {
-                    Field field = instance.getClass().getDeclaredField(name);
-                    field.setAccessible(true);
-                    result = field.get(instance);
-                    field.setAccessible(false);
-                } catch (NoSuchFieldException | IllegalAccessException e) {}
-                return result;
             }
 
             protected PlayerManager getPlayerManager() {
