@@ -19,7 +19,7 @@ import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
 import net.minecraft.EnumChatFormat;
 import net.minecraft.core.BlockPosition;
-import net.minecraft.network.chat.ChatMessage;
+import net.minecraft.network.chat.IChatBaseComponent;
 import net.minecraft.network.protocol.game.*;
 import net.minecraft.network.syncher.DataWatcher;
 import net.minecraft.network.syncher.DataWatcherRegistry;
@@ -43,7 +43,6 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
-import org.bukkit.event.Event;
 import org.bukkit.event.HandlerList;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
@@ -55,7 +54,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URL;
 import java.util.*;
-import java.util.function.*;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
@@ -335,6 +337,7 @@ public abstract class NPC {
 
     public Move.Behaviour follow(NPC npc, double min, double max){
         Validate.isTrue(!npc.equals(this), "NPC cannot follow himself.");
+
         return moveBehaviour.setFollowNPC(npc, min, max);
     }
 
@@ -402,41 +405,53 @@ public abstract class NPC {
         setInteractCooldown(NPC.Attributes.getDefaultInteractCooldown());
     }
 
-    public void addCustomClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull BiConsumer<NPC, Player> customAction){ addClickAction(new NPC.Interact.Actions.Custom(this, clickType,customAction)); }
+    public Interact.Actions.Custom addCustomClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull BiConsumer<NPC, Player> customAction){ return (Interact.Actions.Custom) addClickAction(new Interact.Actions.Custom(this, clickType,customAction)); }
 
-    public void addCustomClickAction(@Nonnull BiConsumer<NPC, Player> customAction){ addCustomClickAction(null, customAction); }
+    public Interact.Actions.Custom addCustomClickAction(@Nonnull BiConsumer<NPC, Player> customAction){ return addCustomClickAction(Interact.ClickType.EITHER, customAction); }
 
-    public void addMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String... message){ addClickAction(new NPC.Interact.Actions.Message(this, clickType, message)); }
+    public Interact.Actions.Message addMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String... message){ return (Interact.Actions.Message) addClickAction(new Interact.Actions.Message(this, clickType, message)); }
 
-    public void addMessageClickAction(@Nonnull String... message){ addMessageClickAction(null, message); }
+    public Interact.Actions.Message addMessageClickAction(@Nonnull String... message){ return addMessageClickAction(Interact.ClickType.EITHER, message); }
 
-    public void addRunPlayerCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){ addClickAction(new NPC.Interact.Actions.PlayerCommand(this, clickType, command)); }
+    public Interact.Actions.PlayerCommand addRunPlayerCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){ return (Interact.Actions.PlayerCommand) addClickAction(new Interact.Actions.PlayerCommand(this, clickType, command)); }
 
-    public void addRunPlayerCommandClickAction(@Nonnull String command){ addRunPlayerCommandClickAction(null, command); }
+    public Interact.Actions.PlayerCommand addRunPlayerCommandClickAction(@Nonnull String command){ return addRunPlayerCommandClickAction(Interact.ClickType.EITHER, command); }
 
-    public void addRunConsoleCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){ addClickAction(new NPC.Interact.Actions.ConsoleCommand(this, clickType, command)); }
+    public Interact.Actions.ConsoleCommand addRunConsoleCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){ return (Interact.Actions.ConsoleCommand) addClickAction(new Interact.Actions.ConsoleCommand(this, clickType, command)); }
 
-    public void addRunConsoleCommandClickAction(@Nonnull String command){ addRunConsoleCommandClickAction(null, command); }
+    public Interact.Actions.ConsoleCommand addRunConsoleCommandClickAction(@Nonnull String command){ return addRunConsoleCommandClickAction(Interact.ClickType.EITHER, command); }
 
-    public void addConnectBungeeServerClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String server){ addClickAction(new NPC.Interact.Actions.BungeeServer(this, clickType, server)); }
+    public Interact.Actions.BungeeServer addConnectBungeeServerClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String server){ return (Interact.Actions.BungeeServer) addClickAction(new Interact.Actions.BungeeServer(this, clickType, server)); }
 
-    public void addConnectBungeeServerClickAction(@Nonnull String server){ addConnectBungeeServerClickAction(null, server); }
+    public Interact.Actions.BungeeServer addConnectBungeeServerClickAction(@Nonnull String server){ return addConnectBungeeServerClickAction(Interact.ClickType.EITHER, server); }
 
-    public void addActionBarMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String message){ addClickAction(new NPC.Interact.Actions.ActionBar(this, clickType, message)); }
+    public Interact.Actions.ActionBar addActionBarMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String message){ return (Interact.Actions.ActionBar) addClickAction(new Interact.Actions.ActionBar(this, clickType, message)); }
 
-    public void addActionBarMessageClickAction(@Nonnull String message){ addActionBarMessageClickAction(null, message); }
+    public Interact.Actions.ActionBar addActionBarMessageClickAction(@Nonnull String message){ return addActionBarMessageClickAction(Interact.ClickType.EITHER, message); }
 
-    public void addTitleMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){ addClickAction(new NPC.Interact.Actions.Title(this, clickType, title, subtitle, fadeIn, stay, fadeOut)); }
+    public Interact.Actions.Title addTitleMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){ return (Interact.Actions.Title) addClickAction(new Interact.Actions.Title(this, clickType, title, subtitle, fadeIn, stay, fadeOut)); }
 
-    public void addTitleMessageClickAction(@Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){ addTitleMessageClickAction(null, title, subtitle, fadeIn, stay, fadeOut); }
+    public Interact.Actions.Title addTitleMessageClickAction(@Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){ return addTitleMessageClickAction(Interact.ClickType.EITHER, title, subtitle, fadeIn, stay, fadeOut); }
 
-    public void addTeleportToLocationClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull Location location){ addClickAction(new NPC.Interact.Actions.TeleportToLocation(this, clickType, location)); }
+    public Interact.Actions.TeleportToLocation addTeleportToLocationClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull Location location){ return (Interact.Actions.TeleportToLocation) addClickAction(new Interact.Actions.TeleportToLocation(this, clickType, location)); }
 
-    public void addTeleportToLocationClickAction(@Nonnull Location location){ addTeleportToLocationClickAction(null, location); }
+    public Interact.Actions.TeleportToLocation addTeleportToLocationClickAction(@Nonnull Location location){ return addTeleportToLocationClickAction(Interact.ClickType.EITHER, location); }
 
     public void resetClickActions(@Nonnull NPC.Interact.ClickType clickType){
-        List<NPC.Interact.ClickAction> remove = this.clickActions.stream().filter(x-> x.getClickType() != null && x.getClickType().equals(clickType)).collect(Collectors.toList());
+        Validate.notNull(clickType, "Click type cannot be null");
+        List<NPC.Interact.ClickAction> remove = this.clickActions.stream().filter(x-> x.getClickType() != null && x.getClickType().equals(clickType) || clickType.equals(Interact.ClickType.EITHER)).collect(Collectors.toList());
         clickActions.removeAll(remove);
+        if(clickType != Interact.ClickType.EITHER){
+            Interact.ClickType inverse = null;
+            if(clickType.equals(Interact.ClickType.RIGHT_CLICK)) inverse = Interact.ClickType.LEFT_CLICK;
+            if(clickType.equals(Interact.ClickType.LEFT_CLICK)) inverse = Interact.ClickType.RIGHT_CLICK;
+            final Interact.ClickType inverseFinal = inverse;
+            this.clickActions.stream().filter(x-> x.getClickType().equals(Interact.ClickType.EITHER)).forEach(x-> x.clickType = inverseFinal);
+        }
+    }
+
+    public void removeClickAction(NPC.Interact.ClickAction clickAction){
+        if(this.clickActions.contains(clickAction)) clickActions.remove(clickAction);
     }
 
     public void resetClickActions(){
@@ -523,6 +538,10 @@ public abstract class NPC {
         return customData.get(key);
     }
 
+    public Set<String> getCustomDataKeys(){
+        return customData.keySet();
+    }
+
     public boolean hasCustomData(String key){
         return customData.containsKey(key);
     }
@@ -548,8 +567,9 @@ public abstract class NPC {
     protected abstract void updateMove();
 
 
-    protected void addClickAction(@Nonnull NPC.Interact.ClickAction clickAction){
+    protected Interact.ClickAction addClickAction(@Nonnull NPC.Interact.ClickAction clickAction){
         this.clickActions.add(clickAction);
+        return clickAction;
     }
 
     protected void clearMoveTask(){
@@ -678,7 +698,7 @@ public abstract class NPC {
 
     protected List<NPC.Interact.ClickAction> getClickActions() { return clickActions; }
 
-    protected List<NPC.Interact.ClickAction> getClickActions(@Nonnull NPC.Interact.ClickType clickType){ return this.clickActions.stream().filter(x-> clickType == null || x.getClickType() == null || x.getClickType().equals(clickType)).collect(Collectors.toList()); }
+    public List<NPC.Interact.ClickAction> getClickActions(@Nonnull NPC.Interact.ClickType clickType){ return this.clickActions.stream().filter(x-> x.getClickType() != null && x.getClickType().equals(clickType)).collect(Collectors.toList()); }
 
     protected HashMap<Integer, NPC.Hologram.Opacity> getLinesOpacity() { return attributes.linesOpacity; }
 
@@ -718,7 +738,7 @@ public abstract class NPC {
             MinecraftServer server = NMSCraftServer.getMinecraftServer();
             WorldServer worldServer = NMSCraftWorld.getWorldServer(super.world);
             GameProfile gameProfile = new GameProfile(gameProfileID, getReplacedCustomName());
-            entityPlayer = new EntityPlayer(server, worldServer, gameProfile);
+            entityPlayer = new EntityPlayer(server, worldServer, gameProfile, null);
             entityPlayer.a(super.x, super.y, super.z, super.yaw, super.pitch);//setLocation
             this.npcHologram = new NPC.Hologram(this, player);
             updateSkin();
@@ -897,8 +917,10 @@ public abstract class NPC {
             if(npcInteractEvent.isCancelled()) return;
             if(hasGlobal()){
                 getGlobal().getClickActions(clickType).forEach(x-> x.execute(player));
+                getGlobal().getClickActions(Interact.ClickType.EITHER).forEach(x-> x.execute(player));
             }
             getClickActions(clickType).forEach(x-> x.execute(player));
+            getClickActions(Interact.ClickType.EITHER).forEach(x-> x.execute(player));
         }
 
         protected void updateGlobalLocation(NPC.Global global){
@@ -1202,13 +1224,16 @@ public abstract class NPC {
         private static final Integer LOOK_TICKS = 2;
 
         private final HashMap<Player, NPC.Personal> players;
-        private final HashMap<Player, NPC.Attributes> customAttributes;
+        private final HashMap<UUID, NPC.Attributes> customAttributes;
         private final Visibility visibility;
         private final Predicate<Player> visibilityRequirement;
-        protected Entity nearestEntity, nearestPlayer;
-        protected Long lastNearestEntityUpdate, lastNearestPlayerUpdate;
+        private Entity nearestEntity, nearestPlayer;
+        private Long lastNearestEntityUpdate, lastNearestPlayerUpdate;
         private boolean autoCreate, autoShow;
         private boolean ownPlayerSkin;
+        private boolean resetCustomAttributes;
+        private boolean persistent;
+        protected NPCLib.GlobalPersistentData persistentData;
 
         protected Global(@Nonnull NPCLib npcLib, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull Visibility visibility, @Nullable Predicate<Player> visibilityRequirement, @Nonnull World world, double x, double y, double z, float yaw, float pitch) {
             super(npcLib, plugin, code, world, x, y, z, yaw, pitch);
@@ -1219,6 +1244,8 @@ public abstract class NPC {
             this.visibilityRequirement = visibilityRequirement;
             this.autoCreate = true;
             this.autoShow = true;
+            this.resetCustomAttributes = false;
+            this.persistent = false;
             np(null);
             ne(null);
             if(visibility.equals(Visibility.EVERYONE)) addPlayers((Collection<Player>) Bukkit.getOnlinePlayers());
@@ -1262,7 +1289,7 @@ public abstract class NPC {
             NPC.Personal personal = getNPCLib().generatePlayerPersonalNPC(player, getPlugin(), getPlugin().getName().toLowerCase() + "." + "global_" + getSimpleCode(), getLocation());
             personal.global = this;
             players.put(player, personal);
-            customAttributes.put(player, new Attributes(null));
+            if(!customAttributes.containsKey(player.getUniqueId())) customAttributes.put(player.getUniqueId(), new Attributes(null));
             //
             updateAttributes(player);
             if(autoCreate) personal.create();
@@ -1278,7 +1305,7 @@ public abstract class NPC {
             Validate.notNull(player, "Cannot remove a null Player");
             if(!players.containsKey(player)) return;
             NPC.Personal personal = getPersonal(player);
-            customAttributes.remove(player);
+            if(resetCustomAttributes) customAttributes.remove(player.getUniqueId());
             players.remove(player);
             getNPCLib().removePersonalNPC(personal);
         }
@@ -1290,6 +1317,18 @@ public abstract class NPC {
         public boolean hasPlayer(@Nonnull Player player){
             Validate.notNull(player, "Cannot verify a null Player");
             return players.containsKey(player);
+        }
+
+        public Set<Player> getPlayers(){
+            return players.keySet();
+        }
+
+        public Predicate<Player> getVisibilityRequirement(){
+            return visibilityRequirement;
+        }
+
+        public boolean hasVisibilityRequirement(){
+            return visibilityRequirement != null;
         }
 
         protected boolean isActive(Player player){
@@ -1359,6 +1398,19 @@ public abstract class NPC {
 
         public void setAutoShow(boolean autoShow) {
             this.autoShow = autoShow;
+        }
+
+        public boolean isPersistent() {
+            return persistent;
+        }
+
+        public boolean canBePersistent() { return getPlugin().equals(PlayerNPCPlugin.getInstance()); }
+
+        @Deprecated
+        public void setPersistent(boolean persistent){
+            Validate.isTrue(canBePersistent(), "This NPC cannot be persistent because is not created by PlayerNPC plugin.");
+            if(persistent == this.persistent) return;
+            this.persistent = persistent;
         }
 
         public void setCustomText(Player player, List<String> lines){
@@ -1459,7 +1511,15 @@ public abstract class NPC {
             getCustomAttributes(player).onFire = null;
         }
 
-        public void resetAllCustomAttributes(Player player) { customAttributes.put(player, new Attributes(null)); }
+        public void resetAllCustomAttributes(Player player) { customAttributes.put(player.getUniqueId(), new Attributes(null)); }
+
+        public boolean isResetCustomAttributesWhenRemovePlayer() {
+            return resetCustomAttributes;
+        }
+
+        public void setResetCustomAttributesWhenRemovePlayer(boolean resetCustomAttributes) {
+            this.resetCustomAttributes = resetCustomAttributes;
+        }
 
         private void updateAttributes(Player player){
             NPC.Personal personal = getPersonal(player);
@@ -1485,6 +1545,20 @@ public abstract class NPC {
             personal.setMoveSpeed(cA.moveSpeed != null ? cA.moveSpeed : A.moveSpeed);
             personal.setOnFire(cA.onFire != null ? cA.onFire : A.onFire);
             personal.setLinesOpacity((HashMap<Integer, Hologram.Opacity>) (cA.linesOpacity != null ? cA.linesOpacity : A.linesOpacity).clone());
+        }
+
+        public void createAllPlayers(){
+            players.forEach((player, npc)->{
+                if(!npc.isCreated()) create(player);
+            });
+        }
+
+        public void show(){
+            forEachActivePlayer((player, npc) -> show(player));
+        }
+
+        public void hide(){
+            forEachActivePlayer((player, npc) -> hide(player));
         }
 
         @Override
@@ -1527,6 +1601,8 @@ public abstract class NPC {
 
         @Override
         public void lookAt(float yaw, float pitch) {
+            super.yaw = yaw;
+            super.pitch = pitch;
             forEachActivePlayer((player, npc)-> npc.lookAt(yaw, pitch));
         }
 
@@ -1602,6 +1678,10 @@ public abstract class NPC {
             this.ownPlayerSkin = ownPlayerSkin;
         }
 
+        public boolean isOwnPlayerSkin() {
+            return ownPlayerSkin;
+        }
+
         public void setOwnPlayerSkin(){
             setOwnPlayerSkin(true);
         }
@@ -1612,8 +1692,8 @@ public abstract class NPC {
         }
 
         public NPC.Attributes getCustomAttributes(Player player){
-            Validate.isTrue(customAttributes.containsKey(player), "Player is not added to this Global NPC");
-            return customAttributes.get(player);
+            Validate.isTrue(customAttributes.containsKey(player.getUniqueId()), "Player is not added to this Global NPC");
+            return customAttributes.get(player.getUniqueId());
         }
 
         protected void np(Entity entity){
@@ -1768,6 +1848,11 @@ public abstract class NPC {
         protected  <E extends Enum<E>> E getNmsEnum(Class<E> nmsEnumClass) {
             return Enum.valueOf(nmsEnumClass, this.nmsName);
         }
+
+        public boolean isDeprecated(){
+            try { return NPC.Slot.class.getField(this.name()).isAnnotationPresent(Deprecated.class); }
+            catch (NoSuchFieldException | SecurityException e) { return false; }
+        }
     }
 
     /**
@@ -1823,7 +1908,7 @@ public abstract class NPC {
         MAGICAL_CRITICAL_EFFECT(5),
         ;
 
-        private int id;
+        private final int id;
 
         Animation(int id){
             this.id = id;
@@ -1861,11 +1946,13 @@ public abstract class NPC {
         private String signature;
         private String playerName;
         private NPC.Skin.Parts parts;
+        private boolean downloadedFromAPI;
 
         public Skin(String texture, String signature){
             this.texture = texture;
             this.signature = signature;
             this.playerName = null;
+            this.downloadedFromAPI = false;
             this.parts = new NPC.Skin.Parts();
         }
 
@@ -1928,6 +2015,10 @@ public abstract class NPC {
             return parts;
         }
 
+        public boolean isDownloadedFromAPI() {
+            return downloadedFromAPI;
+        }
+
         public String[] getData() { return new String[]{texture, signature}; }
 
         public static void fetchSkinAsync(String playerName, Consumer<NPC.Skin> action){
@@ -1944,6 +2035,7 @@ public abstract class NPC {
                         String uuid = getUUID(playerName);
                         String[] data = getSkinMojangServer(uuid);
                         Skin skin = new Skin(data, playerName);
+                        skin.downloadedFromAPI = true;
                         SKIN_CACHE.put(playerName, skin);
                         action.accept(skin);
                     }
@@ -1956,6 +2048,14 @@ public abstract class NPC {
 
         public static void fetchSkinAsync(Player player, Consumer<NPC.Skin> action){
             fetchSkinAsync(player.getName(), action);
+        }
+
+        public static HashMap<String, NPC.Skin> getSkinsInCache(){
+            return (HashMap<String, Skin>) SKIN_CACHE.clone();
+        }
+
+        public static Set<String> getSkinsInCacheKeySet(){
+            return SKIN_CACHE.keySet();
         }
 
         private static String[] getSkinPlayerName(String name) {
@@ -2349,6 +2449,11 @@ public abstract class NPC {
 
             public enum Type{
                 NONE, FOLLOW_PLAYER, FOLLOW_ENTITY, FOLLOW_NPC, CUSTOM_PATH, @Deprecated RANDOM_PATH;
+
+                public boolean isDeprecated(){
+                    try { return NPC.Move.Behaviour.Type.class.getField(this.name()).isAnnotationPresent(Deprecated.class); }
+                    catch (NoSuchFieldException | SecurityException e) { return false; }
+                }
             }
         }
 
@@ -2701,10 +2806,13 @@ public abstract class NPC {
 
                 private final org.bukkit.entity.Player player;
 
-                protected Player(org.bukkit.entity.Player player, NPC npc) {
+                protected Player(org.bukkit.entity.Player player, NPC.Personal npc) {
                     super(npc);
                     this.player = player;
                 }
+
+                @Override
+                public NPC.Personal getNPC(){ return (NPC.Personal) super.getNPC(); }
 
                 public org.bukkit.entity.Player getPlayer() {
                     return player;
@@ -2750,7 +2858,7 @@ public abstract class NPC {
 
             private boolean isCancelled;
 
-            protected Hide(org.bukkit.entity.Player player, NPC npc) {
+            protected Hide(org.bukkit.entity.Player player, NPC.Personal npc) {
                 super(player, npc);
                 this.isCancelled = false;
                 Bukkit.getPluginManager().callEvent(this);
@@ -2773,7 +2881,7 @@ public abstract class NPC {
             private final NPC.Interact.ClickType clickType;
             private boolean isCancelled;
 
-            protected Interact(org.bukkit.entity.Player player, NPC npc, NPC.Interact.ClickType clickType) {
+            protected Interact(org.bukkit.entity.Player player, NPC.Personal npc, NPC.Interact.ClickType clickType) {
                 super(player, npc);
                 this.clickType = clickType;
                 this.isCancelled = false;
@@ -2836,7 +2944,7 @@ public abstract class NPC {
 
             private boolean isCancelled;
 
-            protected Show(org.bukkit.entity.Player player, NPC npc) {
+            protected Show(org.bukkit.entity.Player player, NPC.Personal npc) {
                 super(player, npc);
                 this.isCancelled = false;
                 Bukkit.getPluginManager().callEvent(this);
@@ -2931,15 +3039,17 @@ public abstract class NPC {
 
         private Interact(){}
 
-        public abstract static class ClickAction implements ClickActionInterface {
+        public abstract static class ClickAction {
 
             private final NPC npc;
             private final NPC.Interact.Actions.Type actionType;
-            private final NPC.Interact.ClickType clickType;
+            protected NPC.Interact.ClickType clickType;
+            protected BiConsumer<NPC, Player> action;
 
             protected ClickAction(NPC npc, NPC.Interact.Actions.Type actionType, NPC.Interact.ClickType clickType) {
                 this.npc = npc;
                 this.actionType = actionType;
+                if(clickType == null) clickType = ClickType.EITHER;
                 this.clickType = clickType;
             }
 
@@ -2956,13 +3066,14 @@ public abstract class NPC {
             }
 
             public NPC.Interact.ClickType getClickType() {
+                if(clickType == null) return ClickType.EITHER;
                 return clickType;
             }
 
-        }
+            protected void execute(Player player){
+                action.accept(npc, player);
+            }
 
-        interface ClickActionInterface{
-            void execute(Player player);
         }
 
         public static class Actions{
@@ -2982,16 +3093,9 @@ public abstract class NPC {
 
             public static class Custom extends ClickAction{
 
-                private final BiConsumer<NPC, Player> customAction;
-
                 protected Custom(NPC npc, NPC.Interact.ClickType clickType, BiConsumer<NPC, Player> customAction) {
                     super(npc, NPC.Interact.Actions.Type.CUSTOM_ACTION, clickType);
-                    this.customAction = customAction;
-                }
-
-                @Override
-                public void execute(Player player) {
-                    customAction.accept(getNPC(), player);
+                    super.action = customAction;
                 }
 
             }
@@ -3003,11 +3107,11 @@ public abstract class NPC {
                 protected Message(NPC npc, NPC.Interact.ClickType clickType, String... message) {
                     super(npc, NPC.Interact.Actions.Type.SEND_MESSAGE, clickType);
                     this.messages = message;
+                    super.action = (npc1, player) -> Arrays.stream(getMessages()).toList().forEach(x-> player.sendMessage(getReplacedString(player,x)));
                 }
 
-                @Override
-                public void execute(Player player) {
-                    Arrays.stream(messages).toList().forEach(x-> player.sendMessage(getReplacedString(player,x)));
+                public String[] getMessages() {
+                    return messages;
                 }
             }
 
@@ -3029,24 +3133,18 @@ public abstract class NPC {
 
                 protected PlayerCommand(NPC npc, NPC.Interact.ClickType clickType, String command) {
                     super(npc, NPC.Interact.Actions.Type.RUN_PLAYER_COMMAND, clickType, command);
+                    super.action = (npc1, player) -> Bukkit.getServer().dispatchCommand(player, getReplacedString(player, super.getCommand()));
                 }
 
-                @Override
-                public void execute(Player player) {
-                    Bukkit.getServer().dispatchCommand(player, getReplacedString(player, super.getCommand()));
-                }
             }
 
             public static class ConsoleCommand extends NPC.Interact.Actions.Command{
 
                 protected ConsoleCommand(NPC npc, NPC.Interact.ClickType clickType, String command) {
                     super(npc, NPC.Interact.Actions.Type.RUN_CONSOLE_COMMAND, clickType, command);
+                    super.action = (npc1, player) -> Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), getReplacedString(player, super.getCommand()));
                 }
 
-                @Override
-                public void execute(Player player) {
-                    Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), getReplacedString(player, super.getCommand()));
-                }
             }
 
             public static class Title extends ClickAction{
@@ -3064,12 +3162,29 @@ public abstract class NPC {
                     this.fadeIn = fadeIn;
                     this.stay = stay;
                     this.fadeOut = fadeOut;
+                    super.action = (npc1, player) -> player.sendTitle("§f" + getReplacedString(player,getTitle()), getReplacedString(player,getSubtitle()), getFadeIn(), getStay(), getFadeOut());
                 }
 
-                @Override
-                public void execute(Player player) {
-                    player.sendTitle("§f" + getReplacedString(player,title), getReplacedString(player,subtitle), fadeIn, stay, fadeOut);
+                public String getTitle() {
+                    return title;
                 }
+
+                public String getSubtitle() {
+                    return subtitle;
+                }
+
+                public Integer getFadeIn() {
+                    return fadeIn;
+                }
+
+                public Integer getStay() {
+                    return stay;
+                }
+
+                public Integer getFadeOut() {
+                    return fadeOut;
+                }
+
             }
 
             public static class ActionBar extends ClickAction{
@@ -3079,11 +3194,11 @@ public abstract class NPC {
                 public ActionBar(NPC npc, NPC.Interact.ClickType clickType, String message) {
                     super(npc, NPC.Interact.Actions.Type.SEND_ACTIONBAR_MESSAGE, clickType);
                     this.message = message;
+                    super.action = (npc1, player) -> player.spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(getReplacedString(player, getMessage())));
                 }
 
-                @Override
-                public void execute(Player player) {
-                    player.spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(getReplacedString(player, message)));
+                public String getMessage() {
+                    return message;
                 }
             }
 
@@ -3094,15 +3209,17 @@ public abstract class NPC {
                 protected BungeeServer(NPC npc, NPC.Interact.ClickType clickType, String server) {
                     super(npc, NPC.Interact.Actions.Type.CONNECT_BUNGEE_SERVER, clickType);
                     this.server = server;
+                    super.action = (npc1, player) -> {
+                        if(!Bukkit.getServer().getMessenger().isOutgoingChannelRegistered(PlayerNPCPlugin.getInstance(), "BungeeCord")) Bukkit.getServer().getMessenger().registerOutgoingPluginChannel(PlayerNPCPlugin.getInstance(), "BungeeCord");
+                        ByteArrayDataOutput out = ByteStreams.newDataOutput();
+                        out.writeUTF("Connect");
+                        out.writeUTF(getServer());
+                        player.sendPluginMessage(PlayerNPCPlugin.getInstance(), "BungeeCord", out.toByteArray());
+                    };
                 }
 
-                @Override
-                public void execute(Player player) {
-                    if(!Bukkit.getServer().getMessenger().isOutgoingChannelRegistered(PlayerNPCPlugin.getInstance(), "BungeeCord")) Bukkit.getServer().getMessenger().registerOutgoingPluginChannel(PlayerNPCPlugin.getInstance(), "BungeeCord");
-                    ByteArrayDataOutput out = ByteStreams.newDataOutput();
-                    out.writeUTF("Connect");
-                    out.writeUTF(server);
-                    player.sendPluginMessage(PlayerNPCPlugin.getInstance(), "BungeeCord", out.toByteArray());
+                public String getServer() {
+                    return server;
                 }
             }
 
@@ -3113,22 +3230,28 @@ public abstract class NPC {
                 public TeleportToLocation(NPC npc, NPC.Interact.ClickType clickType, Location location) {
                     super(npc, Type.TELEPORT_TO_LOCATION, clickType);
                     this.location = location;
+                    super.action = (npc1, player) -> player.teleport(getLocation());
                 }
 
-                @Override
-                public void execute(Player player) {
-                    player.teleport(location);
+                public Location getLocation() {
+                    return location;
                 }
             }
 
         }
 
         public enum ClickType{
-            RIGHT_CLICK, LEFT_CLICK;
+            RIGHT_CLICK, LEFT_CLICK, @Deprecated EITHER;
 
-            public boolean isRightClick(){ return this.equals(ClickType.RIGHT_CLICK); }
+            public boolean isRightClick(){ return this.equals(RIGHT_CLICK); }
 
-            public boolean isLeftClick(){ return this.equals(ClickType.LEFT_CLICK); }
+            public boolean isLeftClick(){ return this.equals(LEFT_CLICK); }
+
+            public ClickType getInvert(){
+                if(this.equals(RIGHT_CLICK)) return LEFT_CLICK;
+                if(this.equals(LEFT_CLICK)) return RIGHT_CLICK;
+                return null;
+            }
 
         }
     }
@@ -3172,7 +3295,7 @@ public abstract class NPC {
                 EntityArmorStand armor = new EntityArmorStand(world, location.getX(), location.getY() + (npc.getLineSpacing() * ((getText().size() - line))), location.getZ());
                 armor.n(true); //setCustomNameVisible
                 armor.e(true); //setNoGravity
-                armor.a(new ChatMessage("§f")); //setCustomName
+                armor.b(IChatBaseComponent.a("§f")); //setCustomName
                 armor.j(true); //setInvisible
                 armor.t(true); //setMarker
                 armorStands.add(armor);
@@ -3187,7 +3310,7 @@ public abstract class NPC {
             for(EntityArmorStand as : lines.get(line)){
                 as.e(true); //setNoGravity
                 as.j(true); //setInvisible
-                as.a(new ChatMessage(replacedText)); //setCustomName
+                as.b(IChatBaseComponent.a(replacedText)); //setCustomName
                 as.n(text != null && text != ""); //setCustomNameVisible
             }
         }
@@ -3211,7 +3334,7 @@ public abstract class NPC {
             }
             for(Integer line : lines.keySet()){
                 for(EntityArmorStand armor : lines.get(line)){
-                    NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutSpawnEntityLiving(armor));
+                    NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutSpawnEntity(armor)); //1.18 PacketPlayOutSpawnEntityLiving
                     NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutEntityMetadata(armor.ae(), armor.ai(), true)); //ae getID //ai getDataWatcher
                 }
             }
@@ -3930,6 +4053,8 @@ public abstract class NPC {
 
         public static String format(String s) { return "{" + s + "}"; }
 
+        public static Set<String> keySet() { return placeholders.keySet(); }
+
         public static void addPlaceholder(@Nonnull String placeholder, @Nonnull BiFunction<NPC, Player, String> replacement){
             Validate.notNull(placeholder, "Placeholder cannot be null.");
             Validate.notNull(replacement, "Replacement cannot be null.");
@@ -3945,7 +4070,7 @@ public abstract class NPC {
         public static String replace(@Nonnull NPC npc, @Nonnull Player player, @Nonnull String string){
             Validate.notNull(npc, "NPC cannot be null.");
             Validate.notNull(player, "Player cannot be null.");
-            Validate.notNull(string, "String cannot be null.");
+            if(string == null) return "";
             for(String placeholder : placeholders.keySet()){
                 if(!string.contains("{" + placeholder + "}")) continue;
                 string = r(string, placeholder, placeholders.get(placeholder).apply(npc, player));
