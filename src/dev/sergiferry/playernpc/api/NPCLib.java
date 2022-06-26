@@ -1,6 +1,8 @@
 package dev.sergiferry.playernpc.api;
 
+import com.google.gson.JsonObject;
 import dev.sergiferry.playernpc.PlayerNPCPlugin;
+import dev.sergiferry.playernpc.command.NPCGlobalCommand;
 import dev.sergiferry.playernpc.nms.minecraft.NMSEntityPlayer;
 import dev.sergiferry.playernpc.nms.minecraft.NMSNetworkManager;
 import dev.sergiferry.spigot.nms.NMSUtils;
@@ -13,8 +15,11 @@ import net.minecraft.network.protocol.game.PacketPlayInUseEntity;
 import net.minecraft.world.EnumHand;
 import org.apache.commons.lang.Validate;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -28,9 +33,10 @@ import org.bukkit.plugin.Plugin;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.io.File;
+import java.io.IOException;
 import java.util.*;
-import java.util.function.Function;
-import java.util.function.Predicate;
+import java.util.function.*;
 import java.util.stream.Collectors;
 
 /**
@@ -44,7 +50,7 @@ public class NPCLib implements Listener {
 
     private static NPCLib instance;
 
-    private final Plugin plugin;
+    private final PlayerNPCPlugin plugin;
     private final HashMap<Player, PlayerManager> playerManager;
     private final HashMap<String, NPC.Global> globalNPCs;
     private UpdateLookType updateLookType;
@@ -80,6 +86,13 @@ public class NPCLib implements Listener {
         Validate.notNull(location, "You cannot create an NPC with a null Location");
         Validate.notNull(location.getWorld(), "You cannot create NPC with a null world");
         return generatePlayerGlobalNPC(plugin, a(plugin, code), visibility, visibilityRequirement, location);
+    }
+
+    @Deprecated
+    public NPC.Global generatePersistentGlobalNPC(@Nonnull String code, @Nonnull NPC.Global.Visibility visibility, @Nullable Predicate<Player> visibilityRequirement, @Nonnull Location location){
+        NPC.Global persistent = generateGlobalNPC(plugin, code, visibility, visibilityRequirement, location);
+        //persistent.setPersistent(true);
+        return persistent;
     }
 
     public NPC.Global generateGlobalNPC(@Nonnull Plugin plugin, @Nonnull String code, @Nonnull NPC.Global.Visibility visibility, @Nonnull Location location){
@@ -166,6 +179,23 @@ public class NPCLib implements Listener {
         Set<NPC.Global> npcs = new HashSet<>();
         globalNPCs.keySet().stream().filter(x-> x.startsWith(plugin.getName().toLowerCase() + ".")).forEach(x-> npcs.add(getGlobalNPC(x)));
         return npcs;
+    }
+
+    public void addGlobalCommand(Plugin plugin, String argument, String arguments, boolean enabled, boolean important, String description, String hover, BiConsumer<NPCGlobalCommand.Command, NPCGlobalCommand.CommandData> execute, BiFunction<NPCGlobalCommand.Command, NPCGlobalCommand.CommandData, List<String>> tabComplete, Command.Color color){
+        if(plugin.equals(this.plugin)) throw new IllegalArgumentException("Plugin must be yours.");
+        NPCGlobalCommand.addCommand(plugin, argument, arguments, enabled, important, description, hover, execute, tabComplete, color);
+    }
+
+    public boolean hasGlobalCommand(String argument){
+        return getGlobalCommand(argument) != null;
+    }
+
+    public NPCGlobalCommand.Command getGlobalCommand(String argument){
+        return NPCGlobalCommand.getCommand(argument);
+    }
+
+    public Set<NPCGlobalCommand.Command> getGlobalCommands(Plugin plugin){
+        return NPCGlobalCommand.getCommands(plugin);
     }
 
     public boolean hasPersonalNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String id){
@@ -266,6 +296,7 @@ public class NPCLib implements Listener {
     }
 
     private void onEnable(PlayerNPCPlugin playerNPCPlugin){
+        loadPersistentNPCs();
         Bukkit.getScheduler().runTaskLater(getPlugin(), ()-> { playerNPCPlugin.getServer().getOnlinePlayers().forEach(x-> {
             join(x);
             for(NPC.Global global : getAllGlobalNPCs()){
@@ -275,6 +306,7 @@ public class NPCLib implements Listener {
     }
 
     private void onDisable(PlayerNPCPlugin playerNPCPlugin){
+        savePersistentNPCs();
         playerNPCPlugin.getServer().getOnlinePlayers().forEach(x-> quit(x));
     }
 
@@ -298,7 +330,6 @@ public class NPCLib implements Listener {
     }
 
     private void quit(Player player){
-        getAllGlobalNPCs().forEach(x-> x.removePlayer(player));
         PlayerManager npcPlayerManager = getNPCPlayerManager(player);
         npcPlayerManager.destroyAll();
         npcPlayerManager.getPacketReader().unInject();
@@ -339,6 +370,107 @@ public class NPCLib implements Listener {
         if(!npc.isEmpty())  npc.forEach(x-> removePersonalNPC(x));;
     }
 
+    private void loadPersistentNPCs(){
+        File folder = new File("plugins/PlayerNPC/persistent/global/");
+        if(!folder.exists()) { folder.mkdirs(); }
+        for (File f : folder.listFiles()) {
+            if(!f.getName().contains(".yml")) continue;
+            String id = f.getName().replaceAll(".yml", "");
+            GlobalPersistentData globalPersistentData = new GlobalPersistentData(id);
+            globalPersistentData.load();
+        }
+    }
+
+    private void savePersistentNPCs(){
+        //getAllGlobalNPCs().stream().filter(x-> x.isPersistent()).forEach(x-> x.savePersistent());
+    }
+
+    protected static class GlobalPersistentData{
+
+        private static HashMap<String, GlobalPersistentData> PERSISTENT_DATA;
+
+        static{
+            PERSISTENT_DATA = new HashMap<>();
+        }
+
+        public static GlobalPersistentData getPersistentData(String id) {
+            if(!PERSISTENT_DATA.containsKey(id)) return null;
+            return PERSISTENT_DATA.get(id);
+        }
+
+        private static void setPersistentData(String id, GlobalPersistentData globalPersistentData) {
+            PERSISTENT_DATA.put(id, globalPersistentData);
+        }
+
+        public static void forEachPersistent(Consumer<NPC.Global> action){
+
+        }
+
+        private String id;
+        private NPC.Global global;
+        private File file;
+        private FileConfiguration config;
+
+        protected GlobalPersistentData(String simpleID) {
+            this.id = simpleID;
+            setPersistentData(id, this);
+        }
+
+        protected void load(){
+            if(file == null){
+                this.file = new File(getFilePath());
+                boolean exist = file.exists();
+                if(!exist) try{ file.createNewFile();} catch (Exception e){};
+            }
+            this.config = YamlConfiguration.loadConfiguration(file);
+            if(global != null) NPCLib.getInstance().removeGlobalNPC(global);
+            global = getInstance().generatePersistentGlobalNPC(id, NPC.Global.Visibility.EVERYONE, null, null);
+        }
+
+        public void save(){
+            if(global == null) return;
+            try{ config.save(file); }catch (Exception ignored){}
+        }
+
+        public void remove(){
+            file.delete();
+        }
+
+        public String getFilePath(){
+            return "plugins/PlayerNPC/persistent/global/" + id + ".yml";
+        }
+
+        public NPC.Global getGlobal() {
+            return global;
+        }
+
+        public boolean isLoaded(){
+            return config != null;
+        }
+
+        public Object get(String s){
+            if(config.contains(s)){
+                return config.get(s);
+            }
+            return null;
+        }
+
+        public boolean containsKey(String s){
+            if(config == null) return false;
+            return config.contains(s);
+        }
+
+        public FileConfiguration getConfig(){
+            return this.config;
+        }
+
+        public void set(String s, Object o){
+            if(config == null) return;
+            config.set(s, o);
+        }
+
+    }
+
     public static NPCLib getInstance(){
         return instance;
     }
@@ -352,6 +484,57 @@ public class NPCLib implements Listener {
         RANDOM_UUID,
         NPC_CODE,
         NPC_SIMPLE_CODE
+    }
+
+    public static class Command{
+
+        private static Map<Plugin, Color> colorMap;
+
+        private Command(){}
+
+        static{
+            colorMap = new HashMap<>();
+            colorMap.put(PlayerNPCPlugin.getInstance(), Color.YELLOW);
+        }
+
+        public static void setColor(Plugin plugin, Color color){
+            if(plugin.equals(PlayerNPCPlugin.getInstance())) return;
+            colorMap.put(plugin, color);
+        }
+
+        public static Color getColor(Plugin plugin){
+            if(!colorMap.containsKey(plugin)) return Color.YELLOW;
+            return colorMap.get(plugin);
+        }
+
+        public enum Color{
+
+            YELLOW(ChatColor.YELLOW, ChatColor.GOLD),
+            BLUE(ChatColor.AQUA, ChatColor.DARK_AQUA),
+            GREEN(ChatColor.GREEN, ChatColor.DARK_GREEN),
+            ;
+
+            private ChatColor normal;
+            private ChatColor important;
+
+            Color(ChatColor normal, ChatColor important){
+                this.normal = normal;
+                this.important = important;
+            }
+
+            public ChatColor getNormal() {
+                return normal;
+            }
+
+            public String getImportant(){
+                return "" + important + ChatColor.BOLD;
+            }
+
+            public ChatColor getImportantSimple() {
+                return important;
+            }
+        }
+
     }
 
     protected class PlayerManager {
@@ -454,6 +637,7 @@ public class NPCLib implements Listener {
             return lastEnter;
         }
 
+
         protected static class PacketReader {
 
             private HashMap<NPC, Long> lastClick;
@@ -467,7 +651,7 @@ public class NPCLib implements Listener {
 
             protected void inject() {
                 if(channel != null) return;
-                channel = NMSNetworkManager.getChannel(NMSCraftPlayer.getPlayerConnection(npcPlayerManager.getPlayer()).a);
+                channel = NMSNetworkManager.getChannel(NMSCraftPlayer.getPlayerConnection(npcPlayerManager.getPlayer()).b); //1.18 era .a & 1.19 es .b
                 if(channel.pipeline() == null) return;
                 if(channel.pipeline().get("PacketInjector") != null) return;
                 channel.pipeline().addAfter("decoder", "PacketInjector", new MessageToMessageDecoder<PacketPlayInUseEntity>() {
