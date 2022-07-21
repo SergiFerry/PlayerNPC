@@ -5,6 +5,7 @@ import dev.sergiferry.playernpc.PlayerNPCPlugin;
 import dev.sergiferry.playernpc.command.NPCGlobalCommand;
 import dev.sergiferry.playernpc.nms.minecraft.NMSEntityPlayer;
 import dev.sergiferry.playernpc.nms.minecraft.NMSNetworkManager;
+import dev.sergiferry.playernpc.utils.StringUtils;
 import dev.sergiferry.spigot.nms.NMSUtils;
 import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
 import io.netty.channel.Channel;
@@ -20,6 +21,7 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.configuration.serialization.ConfigurationSerializable;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -36,7 +38,9 @@ import javax.annotation.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.function.*;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**
@@ -53,20 +57,43 @@ public class NPCLib implements Listener {
     private final PlayerNPCPlugin plugin;
     private final HashMap<Player, PlayerManager> playerManager;
     private final HashMap<String, NPC.Global> globalNPCs;
-    private UpdateLookType updateLookType;
-    private Integer updateLookTicks;
-    private Integer ticksUntilTabListHide;
-    private Integer taskID;
+    private final HashMap<Plugin, PluginManager> pluginManager;
+    private FileConfiguration config;
+    private boolean debug;
 
     private NPCLib(@Nonnull PlayerNPCPlugin plugin){
         instance = this;
         this.plugin = plugin;
         this.playerManager = new HashMap<>();
         this.globalNPCs = new HashMap<>();
-        this.updateLookTicks = 5;
-        this.ticksUntilTabListHide = 10;
-        setUpdateLookType(UpdateLookType.MOVE_EVENT);
+        this.pluginManager = new HashMap<>();
+        this.debug = false;
+        registerPlugin(plugin);
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
+    }
+
+    public PluginManager registerPlugin(@Nonnull Plugin plugin){
+        Validate.notNull(plugin, "Cannot register plugin manager from a null plugin.");
+        Validate.isTrue(!pluginManager.containsKey(plugin), "This plugin is already registered.");
+        PluginManager pluginManager = new PluginManager(plugin, this);
+        this.pluginManager.put(plugin, pluginManager);
+        Bukkit.getConsoleSender().sendMessage(this.plugin.getPrefix()  + "§7Registered §e" + plugin.getName() + " §7plugin on the NPCLib");
+        return pluginManager;
+    }
+
+    public boolean isRegistered(@Nonnull Plugin plugin){
+        Validate.notNull(plugin, "Cannot verify plugin manager from a null plugin.");
+        return pluginManager.containsKey(plugin);
+    }
+
+    public PluginManager getPluginManager(@Nonnull Plugin plugin){
+        Validate.notNull(plugin, "Cannot get plugin manager from a null plugin.");
+        Validate.isTrue(this.pluginManager.containsKey(plugin), "This plugin is not registered.");
+        return this.pluginManager.get(plugin);
+    }
+
+    public List<Plugin> getRegisteredPlugins(){
+        return pluginManager.keySet().stream().toList();
     }
 
     public NPC.Personal generatePersonalNPC(@Nonnull Player player, @Nonnull Plugin plugin, @Nonnull String code, @Nonnull Location location){
@@ -76,6 +103,7 @@ public class NPCLib implements Listener {
         Validate.notNull(location, "You cannot create an NPC with a null Location");
         Validate.notNull(location.getWorld(), "You cannot create NPC with a null world");
         Validate.isTrue(!code.toLowerCase().startsWith("global_"), "You cannot create NPC with global tag");
+        Validate.isTrue(isRegistered(plugin), "This plugin is not registered on NPCLib");
         return generatePlayerPersonalNPC(player, plugin, a(plugin, code), location);
     }
 
@@ -85,14 +113,8 @@ public class NPCLib implements Listener {
         Validate.notNull(visibility, "You cannot create an NPC with a null visibility");
         Validate.notNull(location, "You cannot create an NPC with a null Location");
         Validate.notNull(location.getWorld(), "You cannot create NPC with a null world");
+        Validate.isTrue(isRegistered(plugin), "This plugin is not registered on NPCLib");
         return generatePlayerGlobalNPC(plugin, a(plugin, code), visibility, visibilityRequirement, location);
-    }
-
-    @Deprecated
-    public NPC.Global generatePersistentGlobalNPC(@Nonnull String code, @Nonnull NPC.Global.Visibility visibility, @Nullable Predicate<Player> visibilityRequirement, @Nonnull Location location){
-        NPC.Global persistent = generateGlobalNPC(plugin, code, visibility, visibilityRequirement, location);
-        //persistent.setPersistent(true);
-        return persistent;
     }
 
     public NPC.Global generateGlobalNPC(@Nonnull Plugin plugin, @Nonnull String code, @Nonnull NPC.Global.Visibility visibility, @Nonnull Location location){
@@ -109,13 +131,12 @@ public class NPCLib implements Listener {
 
     protected NPC.Personal generatePlayerPersonalNPC(Player player, Plugin plugin, String code, Location location){
         NPC.Personal old = getNPCPlayerManager(player).getNPC(code);
-        if(old != null) return old;
+        Validate.isTrue(old == null, "Personal NPC with code " + code + " for player " + player.getName() + " already exists.");
         return new NPC.Personal(this, player, plugin, code, location);
     }
 
     private NPC.Global generatePlayerGlobalNPC(Plugin plugin, String code, NPC.Global.Visibility visibility, Predicate<Player> visibilityRequirement, Location location){
-        NPC.Global old = globalNPCs.get(code);
-        if(old != null) return old;
+        Validate.isTrue(!globalNPCs.containsKey(code), "Global NPC with code " + code + " already exists.");
         NPC.Global global = new NPC.Global(this, plugin, code, visibility, visibilityRequirement, location);
         globalNPCs.put(code, global);
         return global;
@@ -241,30 +262,14 @@ public class NPCLib implements Listener {
         else if(npc instanceof NPC.Global) removeGlobalNPC((NPC.Global) npc);
     }
 
-    public void setUpdateLookType(@Nonnull UpdateLookType updateLookType) {
-        Validate.notNull(updateLookType, "Update look type must be not null");
-        this.updateLookType = updateLookType;
-        if(taskID != null) getPlayerNPCPlugin().getServer().getScheduler().cancelTask(taskID);
-        if(updateLookType.equals(UpdateLookType.TICKS)){
-            taskID = getPlayerNPCPlugin().getServer().getScheduler().runTaskTimerAsynchronously(getPlayerNPCPlugin(), () -> {
-                Bukkit.getOnlinePlayers().forEach(x-> getAllPersonalNPCs(x).forEach(y-> y.updateMove()));
-            }, updateLookTicks, updateLookTicks).getTaskId();
-        }
+    public void setDebug(boolean debug) {
+        if(this.debug == debug) return;
+        this.debug = debug;
+        saveConfig();
     }
 
-    public void setUpdateLookTicks(Integer ticks){
-        if(ticks < 1) ticks = 1;
-        this.updateLookTicks = ticks;
-        if(updateLookType.equals(UpdateLookType.TICKS)) setUpdateLookType(UpdateLookType.TICKS);                        // This will update the ticks on the active run task.
-    }
-
-    public Integer getTicksUntilTabListHide() {
-        return ticksUntilTabListHide;
-    }
-
-    public void setTicksUntilTabListHide(Integer ticksUntilTabListHide) {
-        if(ticksUntilTabListHide < 1) ticksUntilTabListHide = 1;
-        this.ticksUntilTabListHide = ticksUntilTabListHide;
+    public boolean isDebug() {
+        return debug;
     }
 
     @Deprecated
@@ -281,9 +286,6 @@ public class NPCLib implements Listener {
         return NPC.Attributes.getDefault();
     }
 
-    public UpdateLookType getUpdateLookType() {
-        return updateLookType;
-    }
 
     protected Plugin getPlugin() {
         return plugin;
@@ -295,8 +297,54 @@ public class NPCLib implements Listener {
         return b + code;
     }
 
+    private File checkFileExists(){
+        File file = new File("plugins/PlayerNPC/config.yml");
+        boolean exist = file.exists();
+        if(!exist) try{ file.createNewFile();} catch (Exception e){ printError(e); };
+        return file;
+    }
+
+    public void loadConfig(){
+        File file = checkFileExists();
+        this.config  = YamlConfiguration.loadConfiguration(file);
+        HashMap<String, Object> defaults = new HashMap<>();
+        defaults.put("debug", this.debug);
+        defaults.put("gazeUpdate.ticks", getPluginManager(plugin).updateGazeTicks);
+        defaults.put("gazeUpdate.type", getPluginManager(plugin).updateGazeType.name());
+        defaults.put("tabListHide.ticks", getPluginManager(plugin).ticksUntilTabListHide);
+        defaults.put("skinUpdate.frequency", getPluginManager(plugin).skinUpdateFrequency);
+        boolean m = false;
+        for(String s : defaults.keySet()){
+            if(!config.contains(s)){
+                config.set(s, defaults.get(s));
+                m = true;
+            }
+        }
+        config.setComments("gazeUpdate.type", Arrays.asList("GazeUpdateType: MOVE_EVENT, TICKS"));
+        config.setComments("skinUpdate.frequency", Arrays.asList("TimeUnit: SECONDS, MINUTES, HOURS, DAYS"));
+        if(m) { try { config.save(file); } catch (IOException e) { printError(e); } }
+        //
+        this.debug = config.getBoolean("debug");
+        getPluginManager(plugin).ticksUntilTabListHide = config.getInt("tabListHide.ticks");
+        getPluginManager(plugin).skinUpdateFrequency = config.getObject("skinUpdate.frequency", SkinUpdateFrequency.class);
+        getPluginManager(plugin).updateGazeTicks = config.getInt("gazeUpdate.ticks");
+        getPluginManager(plugin).updateGazeType = NPCLib.UpdateGazeType.valueOf(config.getString("gazeUpdate.type"));
+        getPluginManager(plugin).runGazeUpdate();
+    }
+
+    public void saveConfig(){
+        if(config == null) return;
+        File file = checkFileExists();
+        config.set("debug", this.debug);
+        config.set("gazeUpdate.ticks", getPluginManager(plugin).updateGazeTicks);
+        config.set("gazeUpdate.type", getPluginManager(plugin).updateGazeType.name());
+        config.set("tabListHide.ticks", getPluginManager(plugin).ticksUntilTabListHide);
+        config.set("skinUpdate.frequency", getPluginManager(plugin).skinUpdateFrequency);
+        try { config.save(file); } catch (IOException e) { printError(e); }
+    }
+
     private void onEnable(PlayerNPCPlugin playerNPCPlugin){
-        loadPersistentNPCs();
+        getPluginManager(playerNPCPlugin).onEnable();
         Bukkit.getScheduler().runTaskLater(getPlugin(), ()-> { playerNPCPlugin.getServer().getOnlinePlayers().forEach(x-> {
             join(x);
             for(NPC.Global global : getAllGlobalNPCs()){
@@ -308,6 +356,7 @@ public class NPCLib implements Listener {
     private void onDisable(PlayerNPCPlugin playerNPCPlugin){
         savePersistentNPCs();
         playerNPCPlugin.getServer().getOnlinePlayers().forEach(x-> quit(x));
+        getPluginManager(playerNPCPlugin).onDisable();
     }
 
     private PlayerNPCPlugin getPlayerNPCPlugin(){ return (PlayerNPCPlugin) plugin;}
@@ -324,12 +373,16 @@ public class NPCLib implements Listener {
         PlayerManager.PacketReader reader = npcPlayerManager.getPacketReader();
         reader.inject();
         for(NPC.Global global : getAllGlobalNPCs()){
-            if(!global.getVisibility().equals(NPC.Global.Visibility.EVERYONE)) continue;
+            if(global.getVisibility().equals(NPC.Global.Visibility.SELECTED_PLAYERS) && !global.getSelectedPlayers().contains(player.getName())) continue;
             global.addPlayer(player);
         }
     }
 
     private void quit(Player player){
+        for(NPC.Global global : getAllGlobalNPCs()){
+            if(!global.hasPlayer(player)) continue;
+            global.players.remove(player);
+        }
         PlayerManager npcPlayerManager = getNPCPlayerManager(player);
         npcPlayerManager.destroyAll();
         npcPlayerManager.getPacketReader().unInject();
@@ -351,14 +404,6 @@ public class NPCLib implements Listener {
         npcPlayerManager.destroyWorld(from);
         npcPlayerManager.showWorld(event.getPlayer().getWorld());
     }
-
-    @EventHandler
-    private void onMove(PlayerMoveEvent event){
-        if(!getUpdateLookType().equals(UpdateLookType.MOVE_EVENT)) return;
-        if(event.getFrom().getBlockX() == event.getTo().getBlockX() && event.getFrom().getBlockY() == event.getTo().getBlockY() && event.getFrom().getBlockZ() == event.getTo().getBlockZ()) return;
-        Player player = event.getPlayer();
-        getNPCPlayerManager(player).updateMove();
-    }
     
     @EventHandler
     private void onPluginDisable(PluginDisableEvent event){
@@ -370,112 +415,19 @@ public class NPCLib implements Listener {
         if(!npc.isEmpty())  npc.forEach(x-> removePersonalNPC(x));;
     }
 
-    private void loadPersistentNPCs(){
-        File folder = new File("plugins/PlayerNPC/persistent/global/");
-        if(!folder.exists()) { folder.mkdirs(); }
-        for (File f : folder.listFiles()) {
-            if(!f.getName().contains(".yml")) continue;
-            String id = f.getName().replaceAll(".yml", "");
-            GlobalPersistentData globalPersistentData = new GlobalPersistentData(id);
-            globalPersistentData.load();
-        }
-    }
-
     private void savePersistentNPCs(){
-        //getAllGlobalNPCs().stream().filter(x-> x.isPersistent()).forEach(x-> x.savePersistent());
-    }
-
-    protected static class GlobalPersistentData{
-
-        private static HashMap<String, GlobalPersistentData> PERSISTENT_DATA;
-
-        static{
-            PERSISTENT_DATA = new HashMap<>();
-        }
-
-        public static GlobalPersistentData getPersistentData(String id) {
-            if(!PERSISTENT_DATA.containsKey(id)) return null;
-            return PERSISTENT_DATA.get(id);
-        }
-
-        private static void setPersistentData(String id, GlobalPersistentData globalPersistentData) {
-            PERSISTENT_DATA.put(id, globalPersistentData);
-        }
-
-        public static void forEachPersistent(Consumer<NPC.Global> action){
-
-        }
-
-        private String id;
-        private NPC.Global global;
-        private File file;
-        private FileConfiguration config;
-
-        protected GlobalPersistentData(String simpleID) {
-            this.id = simpleID;
-            setPersistentData(id, this);
-        }
-
-        protected void load(){
-            if(file == null){
-                this.file = new File(getFilePath());
-                boolean exist = file.exists();
-                if(!exist) try{ file.createNewFile();} catch (Exception e){};
-            }
-            this.config = YamlConfiguration.loadConfiguration(file);
-            if(global != null) NPCLib.getInstance().removeGlobalNPC(global);
-            global = getInstance().generatePersistentGlobalNPC(id, NPC.Global.Visibility.EVERYONE, null, null);
-        }
-
-        public void save(){
-            if(global == null) return;
-            try{ config.save(file); }catch (Exception ignored){}
-        }
-
-        public void remove(){
-            file.delete();
-        }
-
-        public String getFilePath(){
-            return "plugins/PlayerNPC/persistent/global/" + id + ".yml";
-        }
-
-        public NPC.Global getGlobal() {
-            return global;
-        }
-
-        public boolean isLoaded(){
-            return config != null;
-        }
-
-        public Object get(String s){
-            if(config.contains(s)){
-                return config.get(s);
-            }
-            return null;
-        }
-
-        public boolean containsKey(String s){
-            if(config == null) return false;
-            return config.contains(s);
-        }
-
-        public FileConfiguration getConfig(){
-            return this.config;
-        }
-
-        public void set(String s, Object o){
-            if(config == null) return;
-            config.set(s, o);
-        }
-
+        NPC.Global.PersistentManager.forEachPersistentManager(x-> x.save());
     }
 
     public static NPCLib getInstance(){
         return instance;
     }
 
-    public enum UpdateLookType{
+    protected static void printError(Exception e){
+        if(NPCLib.getInstance().isDebug()) e.printStackTrace();
+    }
+
+    public enum UpdateGazeType{
         MOVE_EVENT,
         TICKS,
     }
@@ -486,26 +438,172 @@ public class NPCLib implements Listener {
         NPC_SIMPLE_CODE
     }
 
+    public static class PluginManager implements Listener{
+
+        private final Plugin plugin;
+        private final NPCLib npcLib;
+        protected Command.Color commandColor;
+        protected UpdateGazeType updateGazeType;
+        protected Integer updateGazeTicks;
+        protected Integer ticksUntilTabListHide;
+        protected Integer taskID;
+        protected SkinUpdateFrequency skinUpdateFrequency;
+
+        protected PluginManager(Plugin plugin, NPCLib npcLib) {
+            this.plugin = plugin;
+            this.npcLib = npcLib;
+            this.updateGazeTicks = 5;
+            this.ticksUntilTabListHide = 10;
+            this.skinUpdateFrequency = new SkinUpdateFrequency(1, TimeUnit.DAYS);
+            this.updateGazeType = UpdateGazeType.MOVE_EVENT;
+            this.commandColor = Command.Color.YELLOW;
+            plugin.getServer().getPluginManager().registerEvents(this, plugin);
+        }
+
+        protected void onEnable(){
+            if(plugin.equals(npcLib.getPlugin())){
+                npcLib.loadConfig();
+                loadPersistentNPCs();
+            }
+        }
+
+        protected void onDisable(){
+
+        }
+
+        private void loadPersistentNPCs(){
+            Bukkit.getConsoleSender().sendMessage(PlayerNPCPlugin.getInstance().getPrefix() + "§7Loading Persistent Global NPCs for plugin §e" + plugin.getName());
+            File folder = new File("plugins/PlayerNPC/persistent/global/" + plugin.getName().toLowerCase() + "/");
+            if(!folder.exists()) { folder.mkdirs(); }
+            boolean empty = true;
+            for (File f : folder.listFiles()) {
+                if(!f.isDirectory()) continue;
+                try{
+                    NPC.Global.PersistentManager persistent = new NPC.Global.PersistentManager(plugin, f.getName());
+                    persistent.load();
+                    empty = false;
+                }
+                catch (Exception e){
+                    Bukkit.getConsoleSender().sendMessage(PlayerNPCPlugin.getInstance().getPrefix() + "§7Error loading Persistent Global NPC §c" + f.getName());
+                    printError(e);
+                }
+            }
+            if(empty) Bukkit.getConsoleSender().sendMessage(PlayerNPCPlugin.getInstance().getPrefix() +  "§7No Persistent NPC found for plugin §e" + plugin.getName());
+        }
+
+        public Plugin getPlugin() {
+            return plugin;
+        }
+
+        public NPCLib getNPCLib() {
+            return npcLib;
+        }
+
+        public UpdateGazeType getUpdateGazeType() {
+            return updateGazeType;
+        }
+
+        public Integer getUpdateGazeTicks() {
+            return updateGazeTicks;
+        }
+
+        public Integer getTicksUntilTabListHide() {
+            return ticksUntilTabListHide;
+        }
+
+        public Integer getTaskID() {
+            return taskID;
+        }
+
+        public String getCode(String simpleCode){
+            String b = plugin.getName().toLowerCase() + ".";
+            if(simpleCode == null) return b;
+            return b + simpleCode;
+        }
+
+        public SkinUpdateFrequency getSkinUpdateFrequency() {
+            return skinUpdateFrequency;
+        }
+
+        public void setCommandColor(Command.Color color){
+            if(plugin.equals(PlayerNPCPlugin.getInstance())) return;
+            this.commandColor = color;
+        }
+
+        public Command.Color getCommandColor(){
+            if(commandColor == null) return Command.Color.YELLOW;
+            return commandColor;
+        }
+
+        public void setUpdateGazeType(@Nonnull UpdateGazeType updateGazeType) {
+            Validate.notNull(updateGazeType, "Update gaze type must be not null");
+            if(this.updateGazeType.equals(updateGazeType)) return;
+            this.updateGazeType = updateGazeType;
+            if(plugin.equals(npcLib.getPlugin())) npcLib.saveConfig();
+            runGazeUpdate();
+        }
+
+        public void setUpdateGazeTicks(Integer ticks){
+            if(ticks < 1) ticks = 1;
+            if(ticks.equals(this.updateGazeTicks)) return;
+            this.updateGazeTicks = ticks;
+            if(plugin.equals(npcLib.getPlugin())) npcLib.saveConfig();
+            if(this.updateGazeType.equals(UpdateGazeType.TICKS)) runGazeUpdate();                        // This will update the ticks on the active run task.
+        }
+
+        private void runGazeUpdate(){
+            if(taskID != null) plugin.getServer().getScheduler().cancelTask(taskID);
+            if(updateGazeType.equals(UpdateGazeType.TICKS)){
+                taskID = plugin.getServer().getScheduler().runTaskTimerAsynchronously(plugin, () -> {
+                    Bukkit.getOnlinePlayers().forEach(x-> npcLib.getNPCPlayerManager(x).updateMove(plugin));
+                }, updateGazeTicks, updateGazeTicks).getTaskId();
+            }
+        }
+
+        public void setSkinUpdateFrequency(SkinUpdateFrequency skinUpdateFrequency) {
+            this.skinUpdateFrequency = skinUpdateFrequency;
+            if(plugin.equals(npcLib.getPlugin())) npcLib.saveConfig();
+        }
+
+        public void setTicksUntilTabListHide(Integer ticksUntilTabListHide) {
+            if(ticksUntilTabListHide < 1) ticksUntilTabListHide = 1;
+            if(ticksUntilTabListHide.equals(this.ticksUntilTabListHide)) return;
+            this.ticksUntilTabListHide = ticksUntilTabListHide;
+            if(plugin.equals(npcLib.getPlugin())) npcLib.saveConfig();
+        }
+
+        @EventHandler
+        private void onMove(PlayerMoveEvent event){
+            if(!getUpdateGazeType().equals(UpdateGazeType.MOVE_EVENT)) return;
+            if(event.getFrom().getBlockX() == event.getTo().getBlockX() && event.getFrom().getBlockY() == event.getTo().getBlockY() && event.getFrom().getBlockZ() == event.getTo().getBlockZ()) return;
+            Player player = event.getPlayer();
+            npcLib.getNPCPlayerManager(player).updateMove(plugin);
+        }
+    }
+
+    public record SkinUpdateFrequency(Integer value, TimeUnit timeUnit) implements ConfigurationSerializable {
+        public SkinUpdateFrequency {
+            Objects.requireNonNull(value);
+            Objects.requireNonNull(timeUnit);
+            Validate.isTrue(timeUnit.equals(TimeUnit.SECONDS) || timeUnit.equals(TimeUnit.MINUTES) || timeUnit.equals(TimeUnit.HOURS) || timeUnit.equals(TimeUnit.DAYS), "Time unit must be seconds, minutes, hours or days.");
+        }
+
+        @Override
+        public Map<String, Object> serialize() {
+            Map<String, Object> hash = new HashMap<>();
+            hash.put("value", value);
+            hash.put("timeUnit", timeUnit.name());
+            return hash;
+        }
+
+        public static SkinUpdateFrequency deserialize(Map<String, Object> map){
+            return new SkinUpdateFrequency((Integer) map.get("value"), TimeUnit.valueOf((String) map.get("timeUnit")));
+        }
+    }
+
     public static class Command{
 
-        private static Map<Plugin, Color> colorMap;
-
         private Command(){}
-
-        static{
-            colorMap = new HashMap<>();
-            colorMap.put(PlayerNPCPlugin.getInstance(), Color.YELLOW);
-        }
-
-        public static void setColor(Plugin plugin, Color color){
-            if(plugin.equals(PlayerNPCPlugin.getInstance())) return;
-            colorMap.put(plugin, color);
-        }
-
-        public static Color getColor(Plugin plugin){
-            if(!colorMap.containsKey(plugin)) return Color.YELLOW;
-            return colorMap.get(plugin);
-        }
 
         public enum Color{
 
@@ -567,10 +665,8 @@ public class NPCLib implements Listener {
             npcs.remove(code);
         }
 
-        protected void updateMove(){
-            getNPCs(getPlayer().getWorld()).forEach(x->{
-                if(x.isCreated()) x.updateMove();
-            });
+        protected void updateMove(Plugin plugin){
+            getNPCs(getPlayer().getWorld()).stream().filter(x-> x.getPlugin().equals(plugin) && x.isCreated()).forEach(x-> x.updateMove());
         }
 
         protected void destroyWorld(World world){
@@ -651,7 +747,7 @@ public class NPCLib implements Listener {
 
             protected void inject() {
                 if(channel != null) return;
-                channel = NMSNetworkManager.getChannel(NMSCraftPlayer.getPlayerConnection(npcPlayerManager.getPlayer()).b); //1.18 era .a & 1.19 es .b
+                channel = NMSNetworkManager.getChannel(NMSNetworkManager.getNetworkManager(npcPlayerManager.getPlayer())); //1.18 era .a & 1.19 es .b
                 if(channel.pipeline() == null) return;
                 if(channel.pipeline().get("PacketInjector") != null) return;
                 channel.pipeline().addAfter("decoder", "PacketInjector", new MessageToMessageDecoder<PacketPlayInUseEntity>() {
