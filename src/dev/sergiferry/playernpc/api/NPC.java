@@ -10,11 +10,12 @@ import com.mojang.datafixers.util.Pair;
 import dev.sergiferry.playernpc.PlayerNPCPlugin;
 import dev.sergiferry.playernpc.nms.craftbukkit.NMSCraftItemStack;
 import dev.sergiferry.playernpc.nms.craftbukkit.NMSCraftScoreboard;
-import dev.sergiferry.playernpc.nms.minecraft.NMSEntity;
-import dev.sergiferry.playernpc.nms.minecraft.NMSEntityPlayer;
-import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutEntityDestroy;
-import dev.sergiferry.playernpc.nms.minecraft.NMSPacketPlayOutSpawnEntity;
+import dev.sergiferry.playernpc.nms.minecraft.*;
+import dev.sergiferry.playernpc.nms.spigot.NMSFileConfiguration;
+import dev.sergiferry.playernpc.nms.spigot.NMSFileUtils;
+import dev.sergiferry.playernpc.nms.spigot.NMSPlayer;
 import dev.sergiferry.playernpc.utils.ColorUtils;
+import dev.sergiferry.playernpc.utils.MathUtils;
 import dev.sergiferry.playernpc.utils.StringUtils;
 import dev.sergiferry.playernpc.utils.TimerUtils;
 import dev.sergiferry.spigot.nms.craftbukkit.NMSCraftPlayer;
@@ -37,33 +38,46 @@ import net.minecraft.world.entity.decoration.EntityArmorStand;
 import net.minecraft.world.scores.Scoreboard;
 import net.minecraft.world.scores.ScoreboardTeam;
 import net.minecraft.world.scores.ScoreboardTeamBase;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.Validate;
 import org.apache.commons.lang.reflect.FieldUtils;
+import org.apache.logging.log4j.util.TriConsumer;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.type.Slab;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.configuration.serialization.ConfigurationSerializable;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.HandlerList;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.PluginDescriptionFile;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
+import org.mineskin.MineskinClient;
+import org.mineskin.SkinOptions;
+import org.mineskin.data.MineskinException;
+import org.mineskin.data.Skin;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
+import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.lang.reflect.InvocationTargetException;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.*;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -206,36 +220,57 @@ public abstract class NPC {
     }
 
     public void setSkin(@Nonnull String texture, @Nonnull String signature){
-        setSkin(new NPC.Skin(texture, signature));
+        setSkin(null, texture, signature);
     }
 
-    public void setSkin(@Nullable String playerName, Consumer finishAction){
+    public void setSkin(@Nullable String skinName, @Nonnull String texture, @Nonnull String signature){
+        if(skinName == null) setSkin(NPC.Skin.Custom.createCustomSkin(getPlugin(), texture, signature));
+        else setSkin(NPC.Skin.Custom.createCustomSkin(getPlugin(), skinName, texture, signature));
+    }
+
+    public void setSkin(@Nullable String playerName, Consumer<NPC.Skin.Minecraft> finishAction){
         if(playerName == null){
-            setSkin(Skin.STEVE);
+            setSkin(Skin.Minecraft.STEVE);
             return;
         }
-        NPC.Skin.fetchSkinAsync(playerName, (skin) -> {
+        NPC.Skin.Minecraft.fetchSkinAsync(getPlugin(), playerName, (skin) -> {
             setSkin(skin);
             if(finishAction != null) getPlugin().getServer().getScheduler().runTask(getPlugin(), ()-> finishAction.accept(skin));
         });
     }
 
+    public void setMineSkin(Skin.MineSkin skin){
+        setSkin(skin);
+    }
+
+    public void setMineSkin(@Nonnull String id, boolean forceDownload, Consumer<Skin.MineSkin> finishAction){
+        Validate.notNull(id);
+        NPC.Skin.MineSkin.fetchSkinAsync(getPlugin(), id, false, (skin) -> {
+            setMineSkin(skin);
+            if(finishAction != null) getPlugin().getServer().getScheduler().runTask(getPlugin(), ()-> finishAction.accept(skin));
+        });
+    }
+
+    public void setMineSkin(@Nonnull String id, Consumer<Skin.MineSkin> finishAction){
+        setMineSkin(id, false, finishAction);
+    }
+
     public void setSkin(@Nullable String playerName){
-        setSkin(playerName, (Consumer<Skin>) null);
+        setSkin(playerName, (Consumer<Skin.Minecraft>) null);
     }
 
     public void setSkin(@Nullable Player playerSkin){
         if(playerSkin == null){
-            setSkin(Skin.STEVE);
+            setSkin(Skin.Minecraft.STEVE);
             return;
         }
         Validate.isTrue(playerSkin.isOnline(), "Failed to set NPC skin. Player must be online.");
-        setSkin(playerSkin.getName(), (Consumer<Skin>) null);
+        setSkin(playerSkin.getName(), (Consumer<Skin.Minecraft>) null);
     }
 
-    public void setSkin(@Nullable Player playerSkin, Consumer<Skin> finishAction){
+    public void setSkin(@Nullable Player playerSkin, Consumer<Skin.Minecraft> finishAction){
         if(playerSkin == null){
-            setSkin(Skin.STEVE);
+            setSkin(Skin.Minecraft.STEVE);
             return;
         }
         Validate.isTrue(playerSkin.isOnline(), "Failed to set NPC skin. Player must be online.");
@@ -413,37 +448,67 @@ public abstract class NPC {
         setInteractCooldown(NPC.Attributes.getDefaultInteractCooldown());
     }
 
-    public Interact.Actions.Custom addCustomClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull BiConsumer<NPC, Player> customAction){ return (Interact.Actions.Custom) addClickAction(new Interact.Actions.Custom(this, clickType,customAction)); }
+    public Interact.Actions.CustomAction addCustomClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull BiConsumer<NPC, Player> customAction){ return (Interact.Actions.CustomAction) addClickAction(new Interact.Actions.CustomAction(this, clickType,customAction)); }
 
-    public Interact.Actions.Custom addCustomClickAction(@Nonnull BiConsumer<NPC, Player> customAction){ return addCustomClickAction(Interact.ClickType.EITHER, customAction); }
+    public Interact.Actions.CustomAction addCustomClickAction(@Nonnull BiConsumer<NPC, Player> customAction){ return addCustomClickAction(Interact.ClickType.EITHER, customAction); }
 
-    public Interact.Actions.Message addMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String... message){ return (Interact.Actions.Message) addClickAction(new Interact.Actions.Message(this, clickType, message)); }
+    public Interact.Actions.Player.SendChatMessage addMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String... message){ return (Interact.Actions.Player.SendChatMessage) addClickAction(new Interact.Actions.Player.SendChatMessage(this, clickType, message)); }
 
-    public Interact.Actions.Message addMessageClickAction(@Nonnull String... message){ return addMessageClickAction(Interact.ClickType.EITHER, message); }
+    public Interact.Actions.Player.SendChatMessage addMessageClickAction(@Nonnull String... message){ return addMessageClickAction(Interact.ClickType.EITHER, message); }
 
-    public Interact.Actions.PlayerCommand addRunPlayerCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){ return (Interact.Actions.PlayerCommand) addClickAction(new Interact.Actions.PlayerCommand(this, clickType, command)); }
+    public Interact.Actions.Player.PerformCommand addRunPlayerCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){ return (Interact.Actions.Player.PerformCommand) addClickAction(new Interact.Actions.Player.PerformCommand(this, clickType, command)); }
 
-    public Interact.Actions.PlayerCommand addRunPlayerCommandClickAction(@Nonnull String command){ return addRunPlayerCommandClickAction(Interact.ClickType.EITHER, command); }
+    public Interact.Actions.Player.PerformCommand addRunPlayerCommandClickAction(@Nonnull String command){ return addRunPlayerCommandClickAction(Interact.ClickType.EITHER, command); }
 
-    public Interact.Actions.ConsoleCommand addRunConsoleCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){ return (Interact.Actions.ConsoleCommand) addClickAction(new Interact.Actions.ConsoleCommand(this, clickType, command)); }
+    public Interact.Actions.Console.PerformCommand addRunConsoleCommandClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String command){ return (Interact.Actions.Console.PerformCommand) addClickAction(new Interact.Actions.Console.PerformCommand(this, clickType, command)); }
 
-    public Interact.Actions.ConsoleCommand addRunConsoleCommandClickAction(@Nonnull String command){ return addRunConsoleCommandClickAction(Interact.ClickType.EITHER, command); }
+    public Interact.Actions.Console.PerformCommand addRunConsoleCommandClickAction(@Nonnull String command){ return addRunConsoleCommandClickAction(Interact.ClickType.EITHER, command); }
 
-    public Interact.Actions.BungeeServer addConnectBungeeServerClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String server){ return (Interact.Actions.BungeeServer) addClickAction(new Interact.Actions.BungeeServer(this, clickType, server)); }
+    public Interact.Actions.Player.ConnectBungeeServer addConnectBungeeServerClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String server){ return (Interact.Actions.Player.ConnectBungeeServer) addClickAction(new Interact.Actions.Player.ConnectBungeeServer(this, clickType, server)); }
 
-    public Interact.Actions.BungeeServer addConnectBungeeServerClickAction(@Nonnull String server){ return addConnectBungeeServerClickAction(Interact.ClickType.EITHER, server); }
+    public Interact.Actions.Player.ConnectBungeeServer addConnectBungeeServerClickAction(@Nonnull String server){ return addConnectBungeeServerClickAction(Interact.ClickType.EITHER, server); }
 
-    public Interact.Actions.ActionBar addActionBarMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String message){ return (Interact.Actions.ActionBar) addClickAction(new Interact.Actions.ActionBar(this, clickType, message)); }
+    public Interact.Actions.Player.SendActionBarMessage addActionBarMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String message){ return (Interact.Actions.Player.SendActionBarMessage) addClickAction(new Interact.Actions.Player.SendActionBarMessage(this, clickType, message)); }
 
-    public Interact.Actions.ActionBar addActionBarMessageClickAction(@Nonnull String message){ return addActionBarMessageClickAction(Interact.ClickType.EITHER, message); }
+    public Interact.Actions.Player.SendActionBarMessage addActionBarMessageClickAction(@Nonnull String message){ return addActionBarMessageClickAction(Interact.ClickType.EITHER, message); }
 
-    public Interact.Actions.Title addTitleMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){ return (Interact.Actions.Title) addClickAction(new Interact.Actions.Title(this, clickType, title, subtitle, fadeIn, stay, fadeOut)); }
+    public Interact.Actions.Player.SendTitleMessage addTitleMessageClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){ return (Interact.Actions.Player.SendTitleMessage) addClickAction(new Interact.Actions.Player.SendTitleMessage(this, clickType, title, subtitle, fadeIn, stay, fadeOut)); }
 
-    public Interact.Actions.Title addTitleMessageClickAction(@Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){ return addTitleMessageClickAction(Interact.ClickType.EITHER, title, subtitle, fadeIn, stay, fadeOut); }
+    public Interact.Actions.Player.SendTitleMessage addTitleMessageClickAction(@Nonnull String title, @Nonnull String subtitle, int fadeIn, int stay, int fadeOut){ return addTitleMessageClickAction(Interact.ClickType.EITHER, title, subtitle, fadeIn, stay, fadeOut); }
 
-    public Interact.Actions.TeleportToLocation addTeleportToLocationClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull Location location){ return (Interact.Actions.TeleportToLocation) addClickAction(new Interact.Actions.TeleportToLocation(this, clickType, location)); }
+    public Interact.Actions.Player.TeleportToLocation addTeleportToLocationClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull Location location){ return (Interact.Actions.Player.TeleportToLocation) addClickAction(new Interact.Actions.Player.TeleportToLocation(this, clickType, location)); }
 
-    public Interact.Actions.TeleportToLocation addTeleportToLocationClickAction(@Nonnull Location location){ return addTeleportToLocationClickAction(Interact.ClickType.EITHER, location); }
+    public Interact.Actions.Player.TeleportToLocation addTeleportToLocationClickAction(@Nonnull Location location){ return addTeleportToLocationClickAction(Interact.ClickType.EITHER, location); }
+
+    public Interact.Actions.SetCustomData addSetCustomDataClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull String key, @Nullable String value) { return (Interact.Actions.SetCustomData) addClickAction(new Interact.Actions.SetCustomData(this, clickType, key, value)); }
+
+    public Interact.Actions.SetCustomData addSetCustomDataClickAction(@Nonnull String key, @Nullable String value) { return addSetCustomDataClickAction(Interact.ClickType.EITHER, key, value); }
+
+    public Interact.Actions.Player.GiveItem addGivePlayerItemClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull ItemStack itemStack) { return (Interact.Actions.Player.GiveItem) addClickAction(new Interact.Actions.Player.GiveItem(this, clickType, itemStack)); }
+
+    public Interact.Actions.Player.GiveItem addGivePlayerItemClickAction(@Nonnull ItemStack itemStack) { return addGivePlayerItemClickAction(Interact.ClickType.EITHER, itemStack); }
+
+    public Interact.Actions.Player.OpenWorkbench addOpenWorkbenchClickAction(@Nullable NPC.Interact.ClickType clickType) { return (Interact.Actions.Player.OpenWorkbench) addClickAction(new Interact.Actions.Player.OpenWorkbench(this, clickType)); }
+
+    public Interact.Actions.Player.OpenWorkbench addOpenWorkbenchClickAction() { return addOpenWorkbenchClickAction(Interact.ClickType.EITHER); }
+
+    @Deprecated
+    public Interact.Actions.Player.OpenEnchanting addOpenEnchantingClickAction(@Nullable NPC.Interact.ClickType clickType) { return (Interact.Actions.Player.OpenEnchanting) addClickAction(new Interact.Actions.Player.OpenEnchanting(this, clickType)); }
+
+    @Deprecated
+    public Interact.Actions.Player.OpenEnchanting addOpenEnchantingClickAction() { return addOpenEnchantingClickAction(Interact.ClickType.EITHER); }
+
+    public Interact.Actions.Player.OpenBook addOpenBookClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull ItemStack book) { return (Interact.Actions.Player.OpenBook) addClickAction(new Interact.Actions.Player.OpenBook(this, clickType, book)); }
+
+    public Interact.Actions.Player.OpenBook addOpenBookClickAction(@Nonnull ItemStack book) { return addOpenBookClickAction(Interact.ClickType.EITHER, book); }
+
+    public Interact.Actions.PlayAnimation addPlayAnimationClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull Animation animation) { return (Interact.Actions.PlayAnimation) addClickAction(new Interact.Actions.PlayAnimation(this, clickType, animation)); }
+
+    public Interact.Actions.PlayAnimation addPlayAnimationClickAction(@Nonnull Animation animation) { return addPlayAnimationClickAction(Interact.ClickType.EITHER, animation); }
+
+    public Interact.Actions.Player.PlaySound addPlayerPlaySoundClickAction(@Nullable NPC.Interact.ClickType clickType, @Nonnull Sound sound) { return (Interact.Actions.Player.PlaySound) addClickAction(new Interact.Actions.Player.PlaySound(this, clickType, sound)); }
+
+    public Interact.Actions.Player.PlaySound addPlayerPlaySoundClickAction(@Nonnull Sound sound) { return addPlayerPlaySoundClickAction(Interact.ClickType.EITHER, sound); }
 
     public void resetClickActions(@Nonnull NPC.Interact.ClickType clickType){
         Validate.notNull(clickType, "Click type cannot be null");
@@ -714,7 +779,9 @@ public abstract class NPC {
         return pluginManager;
     }
 
-    protected List<NPC.Interact.ClickAction> getClickActions() { return clickActions; }
+    public List<NPC.Interact.ClickAction> getClickActions() { return clickActions.stream().collect(Collectors.toList()); }
+
+    public Integer getClickActionsSize() { return clickActions.size(); }
 
     public List<NPC.Interact.ClickAction> getClickActions(@Nonnull NPC.Interact.ClickType clickType){ return this.clickActions.stream().filter(x-> x.getClickType() != null && x.getClickType().equals(clickType)).collect(Collectors.toList()); }
 
@@ -757,8 +824,12 @@ public abstract class NPC {
             WorldServer worldServer = NMSCraftWorld.getWorldServer(super.world);
             GameProfile gameProfile = new GameProfile(gameProfileID, getReplacedCustomName());
             entityPlayer = NMSEntityPlayer.newEntityPlayer(server, worldServer, gameProfile);
+            if(entityPlayer == null){
+                gameProfile = new GameProfile(gameProfileID, ChatColor.stripColor(getReplacedCustomName()));
+                entityPlayer = NMSEntityPlayer.newEntityPlayer(server, worldServer, gameProfile);
+            }
             Validate.notNull(entityPlayer, "Error at NMSEntityPlayer");
-            entityPlayer.a(super.x, super.y, super.z, super.yaw, super.pitch);//setLocation
+            NMSEntity.setLocation(entityPlayer, super.x, super.y, super.z, super.yaw, super.pitch);
             this.npcHologram = new NPC.Hologram(this, player);
             updateSkin();
             updatePose();
@@ -914,8 +985,8 @@ public abstract class NPC {
             }
             super.yaw = yaw; //yRot
             super.pitch = pitch; //xRot
-            entityPlayer.o(yaw); //setYRot
-            entityPlayer.p(pitch); //setXRot
+            NMSEntity.setYRot(entityPlayer, yaw);
+            NMSEntity.setXRot(entityPlayer, pitch);
         }
 
     /*
@@ -1010,16 +1081,14 @@ public abstract class NPC {
 
         protected void updateScoreboard(Player player){
             GameProfile gameProfile = NMSEntityPlayer.getGameProfile(entityPlayer);
-            Scoreboard scoreboard = null;
-            try{ scoreboard = (Scoreboard) NMSCraftScoreboard.getCraftScoreBoardGetHandle().invoke(NMSCraftScoreboard.getCraftScoreBoardClass().cast(player.getScoreboard())); }catch (Exception e){}
-            Validate.notNull(scoreboard, "Error at NMSCraftScoreboard");
-            ScoreboardTeam scoreboardTeam = scoreboard.f(getShortUUID()) == null ? new ScoreboardTeam(scoreboard, getShortUUID()) : scoreboard.f(getShortUUID());
-            scoreboardTeam.a(ScoreboardTeamBase.EnumNameTagVisibility.b); //EnumNameTagVisibility.NEVER
-            scoreboardTeam.a(getGlowingColor().getEnumChatFormat()); //setColor
-            ScoreboardTeamBase.EnumTeamPush var1 = ScoreboardTeamBase.EnumTeamPush.b; //EnumTeamPush.NEVER
-            if(isCollidable()) var1 = ScoreboardTeamBase.EnumTeamPush.a; //EnumTeamPush.ALWAYS
-            scoreboardTeam.a(var1); //setTeamPush
-            scoreboard.a(gameProfile.getName(), scoreboardTeam); //setPlayerTeam
+            Scoreboard scoreboard = NMSCraftScoreboard.getScoreboard(player);
+            ScoreboardTeam scoreboardTeam = NMSScoreboard.getTeam(scoreboard, getShortUUID()) == null ? new ScoreboardTeam(scoreboard, getShortUUID()) : NMSScoreboard.getTeam(scoreboard, getShortUUID());
+            NMSScoreboard.setNameTagVisibility(scoreboardTeam, NMSScoreboard.nameTagVisibility_NEVER);
+            NMSScoreboard.setTeamColor(scoreboardTeam, getGlowingColor().getEnumChatFormat());
+            ScoreboardTeamBase.EnumTeamPush var1 = NMSScoreboard.teamPush_NEVER;
+            if(isCollidable()) var1 = NMSScoreboard.teamPush_ALWAYS;
+            NMSScoreboard.setTeamPush(scoreboardTeam, var1);
+            NMSScoreboard.setPlayerTeam(scoreboard, gameProfile.getName(), scoreboardTeam);
             NMSCraftPlayer.sendPacket(player, PacketPlayOutScoreboardTeam.a(scoreboardTeam, true));
             NMSCraftPlayer.sendPacket(player, PacketPlayOutScoreboardTeam.a(scoreboardTeam, false));
         }
@@ -1027,7 +1096,7 @@ public abstract class NPC {
         @Override
         protected void updatePlayerRotation(){
             if(entityPlayer == null) return;
-            NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntity.PacketPlayOutEntityLook(NMSEntityPlayer.getEntityID(entityPlayer), (byte) ((super.yaw * 256 / 360)), (byte) ((super.pitch * 256 / 360)), false));
+            NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntity.PacketPlayOutEntityLook(NMSEntity.getEntityID(entityPlayer), (byte) ((super.yaw * 256 / 360)), (byte) ((super.pitch * 256 / 360)), false));
             NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntityHeadRotation(entityPlayer, (byte) (super.yaw * 256 / 360)));
         }
 
@@ -1039,7 +1108,7 @@ public abstract class NPC {
 
         protected void updatePose(){
             if(getPose().equals(NPC.Pose.SLEEPING)) entityPlayer.e(new BlockPosition(super.x, super.y, super.z));
-            entityPlayer.b(getPose().getEntityPose());
+            NMSEntity.setPose(entityPlayer, getPose().getEntityPose());
         }
 
         protected void move(double x, double y, double z){
@@ -1058,12 +1127,12 @@ public abstract class NPC {
             Validate.isTrue(x < 8);
             Validate.isTrue(y < 8);
             Validate.isTrue(z < 8);
-            NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntity.PacketPlayOutRelEntityMove(NMSEntityPlayer.getEntityID(entityPlayer), (short)(x * 4096), (short)(y * 4096), (short)(z * 4096), true));
+            NMSCraftPlayer.sendPacket(player, new PacketPlayOutEntity.PacketPlayOutRelEntityMove(NMSEntity.getEntityID(entityPlayer), (short)(x * 4096), (short)(y * 4096), (short)(z * 4096), true));
         }
 
         protected void updateMetadata() {
-            DataWatcher dataWatcher = NMSEntityPlayer.getDataWatcher(entityPlayer);
-            entityPlayer.i(isGlowing());
+            DataWatcher dataWatcher = NMSEntity.getDataWatcher(entityPlayer);
+            NMSEntity.setGlowingTag(entityPlayer, isGlowing());
             Map<Integer, DataWatcher.Item<?>> map = null;
             try{ map = (Map<Integer, DataWatcher.Item<?>>) FieldUtils.readDeclaredField(dataWatcher, "f", true); } catch (IllegalAccessException e){}
             if(map == null) return;
@@ -1080,7 +1149,7 @@ public abstract class NPC {
             bitMaskIndex = (byte) 0x01;
             if(isOnFire()) b = (byte) (b | bitMaskIndex);
             else b = (byte) (b & ~(1 << bitMaskIndex));
-            dataWatcher.b(DataWatcherRegistry.a.a(0), b);
+            NMSDataWatcher.set(dataWatcher, DataWatcherRegistry.a.a(0), b);
             //
             //Player
             b = 0x00;
@@ -1093,9 +1162,9 @@ public abstract class NPC {
             if(parts.isVisible(Skin.Part.LEFT_PANTS)) b = (byte) (b | 0x10);
             if(parts.isVisible(Skin.Part.RIGHT_PANTS)) b = (byte) (b | 0x20);
             if(parts.isVisible(Skin.Part.HAT)) b = (byte) (b | 0x40);
-            dataWatcher.b(DataWatcherRegistry.a.a(17), b);
+            NMSDataWatcher.set(dataWatcher, DataWatcherRegistry.a.a(17), b);
             //
-            PacketPlayOutEntityMetadata metadataPacket = new PacketPlayOutEntityMetadata(NMSEntityPlayer.getEntityID(entityPlayer), dataWatcher, true);
+            PacketPlayOutEntityMetadata metadataPacket = new PacketPlayOutEntityMetadata(NMSEntity.getEntityID(entityPlayer), dataWatcher, true);
             NMSCraftPlayer.sendPacket(player, metadataPacket);
         }
 
@@ -1111,7 +1180,7 @@ public abstract class NPC {
                 Validate.notNull(craftItem, "Error at NMSCraftItemStack");
                 equipment.add(new Pair(nmsSlot, craftItem));
             }
-            PacketPlayOutEntityEquipment packet = new PacketPlayOutEntityEquipment(NMSEntityPlayer.getEntityID(entityPlayer), equipment);
+            PacketPlayOutEntityEquipment packet = new PacketPlayOutEntityEquipment(NMSEntity.getEntityID(entityPlayer), equipment);
             NMSCraftPlayer.sendPacket(player, packet);
         }
 
@@ -1148,7 +1217,7 @@ public abstract class NPC {
                 NMSCraftPlayer.sendPacket(player, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.e, entityPlayer)); //EnumPlayerInfoAction.REMOVE_PLAYER
                 shownOnTabList = false;
             }
-            NMSCraftPlayer.sendPacket(player, NMSPacketPlayOutEntityDestroy.createPacket(NMSEntityPlayer.getEntityID(entityPlayer)));
+            NMSCraftPlayer.sendPacket(player, NMSPacketPlayOutEntityDestroy.createPacket(NMSEntity.getEntityID(entityPlayer)));
             if(npcHologram != null) npcHologram.hide();
             hiddenToPlayer = true;
         }
@@ -1328,7 +1397,7 @@ public abstract class NPC {
             Validate.notNull(player, "Cannot add a null Player");
             if(players.containsKey(player)) return;
             if(!ignoreVisibilityRequirement && !meetsVisibilityRequirement(player)) return;
-            NPC.Personal personal = getNPCLib().generatePlayerPersonalNPC(player, getPlugin(), getPlugin().getName().toLowerCase() + "." + "global_" + getSimpleCode(), getLocation());
+            NPC.Personal personal = getNPCLib().generatePlayerPersonalNPC(player, getPlugin(), getNPCLib().getFormattedName(getPlugin(), "global_" + getSimpleCode()), getLocation());
             personal.global = this;
             players.put(player, personal);
             if(!selectedPlayers.contains(player.getName())) selectedPlayers.add(player.getName());
@@ -1594,7 +1663,7 @@ public abstract class NPC {
             NPC.Attributes A = getAttributes();
             NPC.Attributes cA = getCustomAttributes(player);
             personal.updateGlobalLocation(this);
-            if(ownPlayerSkin && (personal.getSkin().getPlayerName() == null || !personal.getSkin().getPlayerName().equals(player.getName()))) personal.setSkin(player, skin -> personal.forceUpdate());
+            if(ownPlayerSkin && (personal.getSkin().getType().equals(Skin.Type.CUSTOM) || !((Skin.Minecraft) personal.getSkin()).getPlayerName().equals(player.getName()))) personal.setSkin(player, skin -> personal.forceUpdate());
             else personal.setSkin(cA.skin != null ? cA.skin : A.skin);
             personal.setSkinParts(cA.skinParts != null ? cA.skinParts : A.skinParts);
             personal.setCollidable(cA.collidable != null ? cA.collidable : A.collidable);
@@ -1859,13 +1928,17 @@ public abstract class NPC {
                 if(config.contains("skin.custom.enabled") && config.getBoolean("skin.custom.enabled") && config.contains("skin.custom.texture") && config.contains("skin.custom.signature")){
                     String texture = config.getString("skin.custom.texture");
                     String signature = config.getString("skin.custom.signature");
+                    String skinName = null;
+                    if(config.contains("skin.custom.name")) config.getString("skin.custom.name");
                     if(signature.length() < 684 || texture.length() == 0){
-                        texture = Skin.STEVE.getTexture();
-                        signature = Skin.STEVE.getSignature();
+                        texture = Skin.Minecraft.STEVE.getTexture();
+                        signature = Skin.Minecraft.STEVE.getSignature();
+                        skinName = null;
                     }
                     global.setSkin(texture, signature);
                 }
                 else if(config.contains("skin.player")) global.setSkin(config.getString("skin.player"), skin -> global.forceUpdate());
+                else if(config.contains("skin.mineskin")) global.setMineSkin(config.getString("skin.mineskin"), mineSkin -> global.forceUpdate());
                 if(config.contains("hologram.text")){
                     List<String> lines = config.getStringList("hologram.text");
                     if(lines != null && lines.size() > 0){
@@ -1905,42 +1978,86 @@ public abstract class NPC {
                 }
                 if(config.getConfigurationSection("interact.actions") != null){
                     for(String keys : config.getConfigurationSection("interact.actions").getKeys(false)){
-                        Interact.Actions.Type actionType = Interact.Actions.Type.valueOf(config.getString("interact.actions." + keys + ".type"));
-                        Interact.ClickType clickType = Interact.ClickType.valueOf(config.getString("interact.actions." + keys + ".click"));
-                        if(actionType.equals(Interact.Actions.Type.SEND_MESSAGE)){
-                            List<String> message = config.getStringList("interact.actions." + keys + ".messages");
-                            String[] messages = new String[message.size()];
-                            for(int i = 0; i < message.size(); i++) messages[i] = message.get(i).replaceAll("&", "§");
-                            global.addMessageClickAction(clickType, messages);
+                        try{
+                            Interact.ClickAction clickAction = null;
+                            Interact.Actions.Type actionType = null;
+                            String stringType = config.getString("interact.actions." + keys + ".type");
+                            try{ actionType = Interact.Actions.Type.valueOf( stringType); } catch (Exception e){}
+                            if(actionType == null){ try{ actionType = Interact.Actions.LegacyType.valueOf(stringType).type; Bukkit.getConsoleSender().sendMessage("§8- §eLegacy click action " + stringType + " type was found. Fixing it..."); } catch (Exception e) {} }
+                            if(actionType == null){ throw new IllegalArgumentException(stringType + " type of action is not valid."); }
+                            Interact.ClickType clickType = Interact.ClickType.valueOf(config.getString("interact.actions." + keys + ".click"));
+                            if(actionType.equals(Interact.Actions.Type.PLAYER_SEND_CHAT_MESSAGE)){
+                                List<String> message = config.getStringList("interact.actions." + keys + ".messages");
+                                String[] messages = new String[message.size()];
+                                for(int i = 0; i < message.size(); i++) messages[i] = message.get(i).replaceAll("&", "§");
+                                clickAction = global.addMessageClickAction(clickType, messages);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.PLAYER_SEND_ACTIONBAR_MESSAGE)){
+                                String message = config.getString("interact.actions." + keys + ".message").replaceAll("&", "§");
+                                clickAction = global.addActionBarMessageClickAction(clickType, message);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.PLAYER_CONNECT_BUNGEE_SERVER)){
+                                String server = config.getString("interact.actions." + keys + ".server");
+                                clickAction = global.addConnectBungeeServerClickAction(clickType, server);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.CONSOLE_PERFORM_COMMAND)){
+                                String command = config.getString("interact.actions." + keys + ".command");
+                                clickAction = global.addRunConsoleCommandClickAction(clickType, command);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.PLAYER_PERFORM_COMMAND)){
+                                String command = config.getString("interact.actions." + keys + ".command");
+                                clickAction = global.addRunPlayerCommandClickAction(clickType, command);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.PLAYER_SEND_TITLE_MESSAGE)){
+                                String title = config.getString("interact.actions." + keys + ".title").replaceAll("&", "§");
+                                String subtitle = config.getString("interact.actions." + keys + ".subtitle").replaceAll("&", "§");
+                                Integer fadeIn = config.getInt("interact.actions." + keys + ".fadeIn");
+                                Integer stay = config.getInt("interact.actions." + keys + ".stay");
+                                Integer fadeOut = config.getInt("interact.actions." + keys + ".fadeOut");
+                                clickAction = global.addTitleMessageClickAction(clickType, title, subtitle, fadeIn, stay, fadeOut);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.PLAYER_TELEPORT_TO_LOCATION)){
+                                Location location1 = config.getLocation("interact.actions." + keys + ".location");
+                                clickAction = global.addTeleportToLocationClickAction(clickType, location1);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.PLAYER_GIVE_ITEM)){
+                                ItemStack itemStack = config.getItemStack("interact.actions." + keys + ".item");
+                                clickAction = global.addGivePlayerItemClickAction(clickType, itemStack);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.NPC_SET_CUSTOM_DATA)){
+                                String key = config.getString("interact.actions." + keys + ".key");
+                                String value = config.getString("interact.actions." + keys + ".value");
+                                Boolean checkIfSame = config.getBoolean("interact.actions." + keys + ".checkIfSame");
+                                clickAction = global.addSetCustomDataClickAction(clickType, key, value);
+                                ((Interact.Actions.SetCustomData) clickAction).setCheckIfSame(checkIfSame);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.PLAYER_OPEN_BOOK)){
+                                ItemStack itemStack = config.getItemStack("interact.actions." + keys + ".book");
+                                clickAction = global.addOpenBookClickAction(clickType, itemStack);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.PLAYER_OPEN_WORKBENCH)){
+                                clickAction = global.addOpenWorkbenchClickAction(clickType);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.PLAYER_OPEN_ENCHANTING)){
+                                clickAction = global.addOpenEnchantingClickAction(clickType);
+                            }
+                            else if(actionType.equals(Interact.Actions.Type.NPC_PLAY_ANIMATION)){
+                                Animation animation = Animation.valueOf(config.getString("interact.actions." + keys + ".animation"));
+                                clickAction = global.addPlayAnimationClickAction(clickType, animation);
+                            }
+                            Long delayTicks = config.getLong("interact.actions." + keys + ".delayTicks");
+                            Long cooldownMilliseconds = config.getLong("interact.actions." + keys + ".cooldownMilliseconds");
+                            Boolean enabled = config.contains("interact.actions." + keys + ".enabled") ? config.getBoolean("interact.actions." + keys + ".enabled") : true;
+                            clickAction.setEnabled(enabled);
+                            clickAction.setDelayTicks(delayTicks);
+                            clickAction.setCooldownMilliseconds(cooldownMilliseconds);
+                            if(config.getConfigurationSection("interact.actions." + keys + ".condition") != null){
+                                for(String keysS : config.getConfigurationSection("interact.actions." + keys + ".condition").getKeys(false)){
+                                    clickAction.addCondition((Conditions.Condition) config.get("interact.actions." + keys + ".condition." + keysS));
+                                }
+                            }
                         }
-                        else if(actionType.equals(Interact.Actions.Type.SEND_ACTIONBAR_MESSAGE)){
-                            String message = config.getString("interact.actions." + keys + ".message").replaceAll("&", "§");
-                            global.addActionBarMessageClickAction(clickType, message);
-                        }
-                        else if(actionType.equals(Interact.Actions.Type.CONNECT_BUNGEE_SERVER)){
-                            String server = config.getString("interact.actions." + keys + ".server");
-                            global.addConnectBungeeServerClickAction(clickType, server);
-                        }
-                        else if(actionType.equals(Interact.Actions.Type.RUN_CONSOLE_COMMAND)){
-                            String command = config.getString("interact.actions." + keys + ".command");
-                            global.addRunConsoleCommandClickAction(clickType, command);
-                        }
-                        else if(actionType.equals(Interact.Actions.Type.RUN_PLAYER_COMMAND)){
-                            String command = config.getString("interact.actions." + keys + ".command");
-                            global.addRunPlayerCommandClickAction(clickType, command);
-                        }
-                        else if(actionType.equals(Interact.Actions.Type.SEND_TITLE_MESSAGE)){
-                            String title = config.getString("interact.actions." + keys + ".title").replaceAll("&", "§");
-                            String subtitle = config.getString("interact.actions." + keys + ".subtitle").replaceAll("&", "§");
-                            Integer fadeIn = config.getInt("interact.actions." + keys + ".fadeIn");
-                            Integer stay = config.getInt("interact.actions." + keys + ".stay");
-                            Integer fadeOut = config.getInt("interact.actions." + keys + ".fadeOut");
-                            global.addTitleMessageClickAction(clickType, title, subtitle, fadeIn, stay, fadeOut);
-                        }
-                        else if(actionType.equals(Interact.Actions.Type.TELEPORT_TO_LOCATION)){
-                            Location location1 = config.getLocation("interact.actions." + keys + ".location");
-                            global.addTeleportToLocationClickAction(clickType, location1);
-                        }
+                        catch (Exception e) { NPCLib.printError(e); }
                     }
                 }
                 //
@@ -1952,96 +2069,139 @@ public abstract class NPC {
             public void save(){
                 if(global == null) global = NPCLib.getInstance().getGlobalNPC(plugin, id);
                 if(global == null || !global.isPersistent()) return;
-                checkFileExists();
-                if(config == null) config  = YamlConfiguration.loadConfiguration(file);
-                //
-                if(config.contains("disableSaving") && config.getBoolean("disableSaving")) return;
-                config.options().setHeader(Arrays.asList("Persistent Global NPC " + global.getCode()));
-                config.set("location", global.getLocation());
-                config.set("visibility.type", global.getVisibility().name());
-                config.set("visibility.requirement", global.getVisibilityRequirement() != null && global.getCustomDataKeys().contains("visibilityrequirementpermission") ? global.getCustomData("visibilityrequirementpermission") : null);
-                if(global.getVisibility().equals(Visibility.SELECTED_PLAYERS)) config.set("visibility.selectedPlayers", global.selectedPlayers);
-                else config.set("visibility.selectedPlayers", null);
-                config.set("skin.player", global.getSkin().playerName);
-                if(!config.contains("skin.custom")){
-                    config.set("skin.custom.enabled", false);
-                    config.set("skin.custom.texture", "");
-                    config.set("skin.custom.signature", "");
+                try{
+                    checkFileExists();
+                    if(config == null) config  = YamlConfiguration.loadConfiguration(file);
+                    //
+                    if(config.contains("disableSaving") && config.getBoolean("disableSaving")) return;
+                    NMSFileConfiguration.setHeader(config, Arrays.asList("Persistent Global NPC " + global.getCode()));
+                    config.set("location", global.getLocation());
+                    config.set("visibility.type", global.getVisibility().name());
+                    config.set("visibility.requirement", global.getVisibilityRequirement() != null && global.getCustomDataKeys().contains("visibilityrequirementpermission") ? global.getCustomData("visibilityrequirementpermission") : null);
+                    if(global.getVisibility().equals(Visibility.SELECTED_PLAYERS)) config.set("visibility.selectedPlayers", global.selectedPlayers);
+                    else config.set("visibility.selectedPlayers", null);
+                    config.set("skin.player", global.getSkin().getType().equals(Skin.Type.MINECRAFT) ? ((Skin.Minecraft) global.getSkin()).getPlayerName() : null);
+                    config.set("skin.mineskin", global.getSkin().getType().equals(Skin.Type.MINESKIN) ? ((Skin.MineSkin) global.getSkin()).getMineSkinURL() : null);
+                    if(!config.contains("skin.custom")){
+                        config.set("skin.custom.enabled", false);
+                        config.set("skin.custom.texture", "");
+                        config.set("skin.custom.signature", "");
+                        config.set("skin.custom.name", "");
+                    }
+                    if(global.getSkin().getType().equals(Skin.Type.CUSTOM)){
+                        config.set("skin.custom.enabled", true);
+                        config.set("skin.custom.texture", global.getSkin().getTexture());
+                        config.set("skin.custom.signature", global.getSkin().getSignature());
+                        config.set("skin.custom.name", ((NPC.Skin.Custom) global.getSkin()).getSkinName());
+                    }
+                    else config.set("skin.custom.enabled", false);
+                    NMSFileConfiguration.setComments(config, "skin.custom.enabled", Arrays.asList("If you want to use a custom texture, set enabled as true, if not, it will use the player name skin.", "To easily get texture and signature use '/npclib getskininfo (type) (name)' or https://mineskin.org/"));
+                    config.set("skin.ownPlayer", global.isOwnPlayerSkin());
+                    Arrays.stream(Skin.Part.values()).forEach(x-> config.set("skin.parts." + x.name().toLowerCase(), global.getSkinParts().isVisible(x)));
+                    config.set("customData", null);
+                    for(String keys : global.getCustomDataKeys()) config.set("customData." + keys, global.getCustomData(keys));
+                    List<String> lines = global.getText();
+                    if(lines != null && lines.size() > 0){
+                        List<String> coloredLines = new ArrayList<>();
+                        lines.forEach(x-> coloredLines.add(x.replaceAll("§", "&")));
+                        config.set("hologram.text", coloredLines);
+                    } else config.set("hologram.text", lines);
+                    config.set("hologram.lineSpacing", global.getLineSpacing());
+                    config.set("hologram.textOpacity", global.getTextOpacity().name());
+                    config.set("hologram.linesOpacity", null);
+                    for(Integer line : global.getLinesOpacity().keySet()) config.set("hologram.linesOpacity." + line, global.getLineOpacity(line).name());
+                    config.set("hologram.alignment", global.getTextAlignment());
+                    config.set("gazeTracking.type", global.getGazeTrackingType().name());
+                    config.set("pose", global.getPose().name());
+                    config.set("collidable", global.isCollidable());
+                    config.set("distance.hide", global.getHideDistance());
+                    config.set("glow.enabled", global.isGlowing());
+                    config.set("glow.color", global.getGlowingColor().name());
+                    config.set("tabList.show", global.isShowOnTabList());
+                    config.set("tabList.name", global.getCustomTabListName().replaceAll("§", "&"));
+                    config.set("move.speed", global.getMoveSpeed());
+                    Arrays.stream(Slot.values()).forEach(x-> config.set("slots." + x.name().toLowerCase(), global.getSlots().get(x)));
+                    config.set("onFire", global.isOnFire());
+                    config.set("interact.cooldown", global.getInteractCooldown());
+                    config.set("interact.actions", null);
+                    int clickActionID = 0;
+                    for(Interact.ClickAction clickAction : global.getClickActions()){
+                        if(clickAction.getActionType().equals(Interact.Actions.Type.CUSTOM_ACTION)) continue;
+                        clickActionID++;
+                        config.set("interact.actions." + clickActionID + ".type", clickAction.actionType.name());
+                        config.set("interact.actions." + clickActionID + ".click", clickAction.clickType.name());
+                        config.set("interact.actions." + clickActionID + ".enabled", clickAction.isEnabled());
+                        config.set("interact.actions." + clickActionID + ".delayTicks", clickAction.delayTicks);
+                        config.set("interact.actions." + clickActionID + ".cooldownMilliseconds", clickAction.cooldownMilliseconds);
+                        if(clickAction instanceof Interact.Actions.Player.SendChatMessage){
+                            Interact.Actions.Player.SendChatMessage castAction = (Interact.Actions.Player.SendChatMessage) clickAction;
+                            String[] messages = new String[castAction.getMessages().length];
+                            for(int i = 0; i < castAction.getMessages().length; i++) messages[i] = castAction.getMessages()[i].replaceAll("§", "&");
+                            config.set("interact.actions." + clickActionID + ".messages", messages);
+                        }
+                        else if(clickAction instanceof Interact.Actions.Player.SendActionBarMessage){
+                            Interact.Actions.Player.SendActionBarMessage castAction = (Interact.Actions.Player.SendActionBarMessage) clickAction;
+                            config.set("interact.actions." + clickActionID + ".message", castAction.getMessage().replaceAll("§", "&"));
+                        }
+                        else if(clickAction instanceof Interact.Actions.Player.ConnectBungeeServer){
+                            Interact.Actions.Player.ConnectBungeeServer castAction = (Interact.Actions.Player.ConnectBungeeServer) clickAction;
+                            config.set("interact.actions." + clickActionID + ".server", castAction.getServer());
+                        }
+                        else if(clickAction instanceof Interact.Actions.Console.PerformCommand){
+                            Interact.Actions.Console.PerformCommand castAction = (Interact.Actions.Console.PerformCommand) clickAction;
+                            config.set("interact.actions." + clickActionID + ".command", castAction.getCommand());
+                        }
+                        else if(clickAction instanceof Interact.Actions.Player.PerformCommand){
+                            Interact.Actions.Player.PerformCommand castAction = (Interact.Actions.Player.PerformCommand) clickAction;
+                            config.set("interact.actions." + clickActionID + ".command", castAction.getCommand());
+                        }
+                        else if(clickAction instanceof Interact.Actions.Player.SendTitleMessage){
+                            Interact.Actions.Player.SendTitleMessage castAction = (Interact.Actions.Player.SendTitleMessage) clickAction;
+                            config.set("interact.actions." + clickActionID + ".title", castAction.getTitle().replaceAll("§", "&"));
+                            config.set("interact.actions." + clickActionID + ".subtitle", castAction.getSubtitle().replaceAll("§", "&"));
+                            config.set("interact.actions." + clickActionID + ".fadeIn", castAction.getFadeIn());
+                            config.set("interact.actions." + clickActionID + ".stay", castAction.getStay());
+                            config.set("interact.actions." + clickActionID + ".fadeOut", castAction.getFadeOut());
+                        }
+                        else if(clickAction instanceof Interact.Actions.Player.TeleportToLocation){
+                            Interact.Actions.Player.TeleportToLocation castAction = (Interact.Actions.Player.TeleportToLocation) clickAction;
+                            config.set("interact.actions." + clickActionID + ".location", castAction.getLocation());
+                        }
+                        else if(clickAction instanceof Interact.Actions.Player.GiveItem){
+                            Interact.Actions.Player.GiveItem castAction = (Interact.Actions.Player.GiveItem) clickAction;
+                            config.set("interact.actions." + clickActionID + ".item", castAction.getItemStack());
+                        }
+                        else if(clickAction instanceof Interact.Actions.Player.GiveKit){
+                            Interact.Actions.Player.GiveKit castAction = (Interact.Actions.Player.GiveKit) clickAction;
+                            config.set("interact.actions." + clickActionID + ".kit", castAction.getKit());
+                        }
+                        else if(clickAction instanceof Interact.Actions.SetCustomData){
+                            Interact.Actions.SetCustomData castAction = (Interact.Actions.SetCustomData) clickAction;
+                            config.set("interact.actions." + clickActionID + ".key", castAction.getKey());
+                            config.set("interact.actions." + clickActionID + ".value", castAction.getValue());
+                            config.set("interact.actions." + clickActionID + ".checkIfSame", castAction.isCheckIfSame());
+                        }
+                        else if(clickAction instanceof Interact.Actions.Player.OpenBook){
+                            Interact.Actions.Player.OpenBook castAction = (Interact.Actions.Player.OpenBook) clickAction;
+                            config.set("interact.actions." + clickActionID + ".book", castAction.getBook());
+                        }
+                        else if(clickAction instanceof Interact.Actions.PlayAnimation){
+                            Interact.Actions.PlayAnimation castAction = (Interact.Actions.PlayAnimation) clickAction;
+                            config.set("interact.actions." + clickActionID + ".animation", castAction.getAnimation().name());
+                        }
+                        for(int i = 0; i < clickAction.getConditions().size(); i++){
+                            config.set("interact.actions." + clickActionID + ".condition." + (i+1), clickAction.getConditions().get(i));
+                        }
+                    }
+                    if(!config.contains("disableSaving")) config.set("disableSaving", false);
+                    config.save(file);
+                    this.lastUpdate.save();
+                    PlayerNPCPlugin.sendConsoleMessage("§7Persistent Global NPC §a" + global.getCode() + " §7has been saved.");
                 }
-                config.setComments("skin.custom.enabled", Arrays.asList("If you want to use a custom texture, set enabled as true, if not, it will use the player name skin.", "To easily get texture and signature use '/npclib getskininfo (playerName)' or https://mineskin.org/"));
-                config.set("skin.ownPlayer", global.isOwnPlayerSkin());
-                Arrays.stream(Skin.Part.values()).forEach(x-> config.set("skin.parts." + x.name().toLowerCase(), global.getSkinParts().isVisible(x)));
-                config.set("customData", null);
-                for(String keys : global.getCustomDataKeys()) config.set("customData." + keys, global.getCustomData(keys));
-                List<String> lines = global.getText();
-                if(lines != null && lines.size() > 0){
-                    List<String> coloredLines = new ArrayList<>();
-                    lines.forEach(x-> coloredLines.add(x.replaceAll("§", "&")));
-                    config.set("hologram.text", coloredLines);
-                } else config.set("hologram.text", lines);
-                config.set("hologram.lineSpacing", global.getLineSpacing());
-                config.set("hologram.textOpacity", global.getTextOpacity().name());
-                config.set("hologram.linesOpacity", null);
-                for(Integer line : global.getLinesOpacity().keySet()) config.set("hologram.linesOpacity." + line, global.getLineOpacity(line).name());
-                config.set("hologram.alignment", global.getTextAlignment());
-                config.set("gazeTracking.type", global.getGazeTrackingType().name());
-                config.set("pose", global.getPose().name());
-                config.set("collidable", global.isCollidable());
-                config.set("distance.hide", global.getHideDistance());
-                config.set("glow.enabled", global.isGlowing());
-                config.set("glow.color", global.getGlowingColor().name());
-                config.set("tabList.show", global.isShowOnTabList());
-                config.set("tabList.name", global.getCustomTabListName().replaceAll("§", "&"));
-                config.set("move.speed", global.getMoveSpeed());
-                Arrays.stream(Slot.values()).forEach(x-> config.set("slots." + x.name().toLowerCase(), global.getSlots().get(x)));
-                config.set("onFire", global.isOnFire());
-                config.set("interact.cooldown", global.getInteractCooldown());
-                config.set("interact.actions", null);
-                int clickActionID = 0;
-                for(Interact.ClickAction clickAction : global.getClickActions()){
-                    if(clickAction.getActionType().equals(Interact.Actions.Type.CUSTOM_ACTION)) continue;
-                    clickActionID++;
-                    config.set("interact.actions." + clickActionID + ".type", clickAction.actionType.name());
-                    config.set("interact.actions." + clickActionID + ".click", clickAction.clickType.name());
-                    if(clickAction instanceof Interact.Actions.Message){
-                        Interact.Actions.Message castAction = (Interact.Actions.Message) clickAction;
-                        String[] messages = new String[castAction.getMessages().length];
-                        for(int i = 0; i < castAction.getMessages().length; i++) messages[i] = castAction.getMessages()[i].replaceAll("§", "&");
-                        config.set("interact.actions." + clickActionID + ".messages", messages);
-                    }
-                    else if(clickAction instanceof Interact.Actions.ActionBar){
-                        Interact.Actions.ActionBar castAction = (Interact.Actions.ActionBar) clickAction;
-                        config.set("interact.actions." + clickActionID + ".message", castAction.getMessage().replaceAll("§", "&"));
-                    }
-                    else if(clickAction instanceof Interact.Actions.BungeeServer){
-                        Interact.Actions.BungeeServer castAction = (Interact.Actions.BungeeServer) clickAction;
-                        config.set("interact.actions." + clickActionID + ".server", castAction.getServer());
-                    }
-                    else if(clickAction instanceof Interact.Actions.ConsoleCommand){
-                        Interact.Actions.ConsoleCommand castAction = (Interact.Actions.ConsoleCommand) clickAction;
-                        config.set("interact.actions." + clickActionID + ".command", castAction.getCommand());
-                    }
-                    else if(clickAction instanceof Interact.Actions.PlayerCommand){
-                        Interact.Actions.PlayerCommand castAction = (Interact.Actions.PlayerCommand) clickAction;
-                        config.set("interact.actions." + clickActionID + ".command", castAction.getCommand());
-                    }
-                    else if(clickAction instanceof Interact.Actions.Title){
-                        Interact.Actions.Title castAction = (Interact.Actions.Title) clickAction;
-                        config.set("interact.actions." + clickActionID + ".title", castAction.getTitle().replaceAll("§", "&"));
-                        config.set("interact.actions." + clickActionID + ".subtitle", castAction.getSubtitle().replaceAll("§", "&"));
-                        config.set("interact.actions." + clickActionID + ".fadeIn", castAction.getFadeIn());
-                        config.set("interact.actions." + clickActionID + ".stay", castAction.getStay());
-                        config.set("interact.actions." + clickActionID + ".fadeOut", castAction.getFadeOut());
-                    }
-                    else if(clickAction instanceof Interact.Actions.TeleportToLocation){
-                        Interact.Actions.TeleportToLocation castAction = (Interact.Actions.TeleportToLocation) clickAction;
-                        config.set("interact.actions." + clickActionID + ".location", castAction.getLocation());
-                    }
+                catch (Exception e){
+                    e.printStackTrace();
+                    PlayerNPCPlugin.sendConsoleMessage("§7There was an error while saving Persistent Global NPC §c" + global.getCode() );
                 }
-                if(!config.contains("disableSaving")) config.set("disableSaving", false);
-                try{ config.save(file); } catch (Exception ignored){}
-                this.lastUpdate.save();
-                PlayerNPCPlugin.sendConsoleMessage("§7Persistent Global NPC §a" + global.getCode() + " §7has been saved.");
             }
 
             private void checkFileExists(){
@@ -2049,7 +2209,7 @@ public abstract class NPC {
                 if(!exist) try{ file.createNewFile();} catch (Exception e){};
             }
 
-            public void remove(){
+            protected void remove(){
                 config = null;
                 if(file.exists()) file.delete();
                 File folder = new File(getFolderPath());
@@ -2064,11 +2224,15 @@ public abstract class NPC {
                 try { config.save(file); } catch (Exception ignored) {}
             }
 
-            public String getFilePath(){
+            public boolean isDisableSaving(){
+                return (boolean) get("disableSaving");
+            }
+
+            protected String getFilePath(){
                 return getFolderPath() + "/data.yml";
             }
 
-            public String getFolderPath(){
+            protected String getFolderPath(){
                 return "plugins/PlayerNPC/persistent/global/" + plugin.getName().toLowerCase() + "/" + id;
             }
 
@@ -2084,23 +2248,23 @@ public abstract class NPC {
                 return config != null;
             }
 
-            public Object get(String s){
-                if(config.contains(s)){
+            protected Object get(String s){
+                if(config != null && config.contains(s)){
                     return config.get(s);
                 }
                 return null;
             }
 
-            public boolean containsKey(String s){
+            protected boolean containsKey(String s){
                 if(config == null) return false;
                 return config.contains(s);
             }
 
-            public FileConfiguration getConfig(){
+            protected FileConfiguration getConfig(){
                 return this.config;
             }
 
-            public void set(String s, Object o){
+            protected void set(String s, Object o){
                 if(config == null) return;
                 config.set(s, o);
             }
@@ -2357,66 +2521,111 @@ public abstract class NPC {
 
     }
 
-    public static class Skin {
+    public static abstract class Skin {
 
-        protected static final Skin STEVE;
-        protected static final Skin ALEX;
-        protected static final HashMap<String, NPC.Skin> SKIN_CACHE;
-        protected static final List<String> LOCAL_SKIN_NAMES;
+        protected static net.md_5.bungee.api.ChatColor[][] UNKNOWN_AVATAR;
+        protected static net.md_5.bungee.api.ChatColor MOST_COMMON_COLOR_UNKNOWN_AVATAR;
 
         static{
-            SKIN_CACHE = new HashMap<>();
-            STEVE = new Skin(
-                    "ewogICJ0aW1lc3RhbXAiIDogMTY1NjUzMDcyOTgyNiwKICAicHJvZmlsZUlkIiA6ICJjMDZmODkwNjRjOGE0OTExOWMyOWVhMWRiZDFhYWI4MiIsCiAgInByb2ZpbGVOYW1lIiA6ICJNSEZfU3RldmUiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMWE0YWY3MTg0NTVkNGFhYjUyOGU3YTYxZjg2ZmEyNWU2YTM2OWQxNzY4ZGNiMTNmN2RmMzE5YTcxM2ViODEwYiIKICAgIH0KICB9Cn0=",
-                    "D5KDlE7KmMYeo+n0bY7kRjxdoZ8ondpgLC0tVcDW/wER9tRAWGlkaUyC4cUjkiYtMFANOxnPNz42iWg+gKAX/qE3lKoJpFw8LmgC587QpEDZTsIwzrIriDDiUc+RQ83VNzy9lkrzm+/llFhuPmONhWIeoVgXQYnJXFXOjTA3uiqHq6IJR4fZzD+0lSpr8jm0X1B+XAiAV7xbzMjg2woC3ur7+81Ub27MNGdAmI5eh50rqqjIHx+kRHJPPB3klbAdkTkcnF2rhDuP9jLtJbb17L+40yR8MH3G1AsRBg+N9MlGb4qF3fK9m2lDNxrGpVe+5fj4ffHnTJ680X9O8cnGxtHFyHm3I65iIhVgFY/DQQ6XSxLgPrmdyVOV98OATc7g2/fFpiI6aRzFrXvCLzXcBzmcayhv8BgG8yBlHdYmMZScjslLKjgWB9mgtOh5ZFFb3ZRkwPvdKUqCQHDPovo9K3LwyAtg9QwJ7u+HN03tpDWllXIjT3mKrtsfWMorNNQ5Bh1St0If4Dg00tpW/DUwNs+oua0PhN/DbFEe3aog2jVfzy3IAXqW2cqiZlnRSm55vMrr1CI45PgjP2LS1c9OYJJ3k+ov4IdvBpDTiG9PfsPWcwtqm8ujxy/TqIWfSajL/RP+TFDoN/F8j8HhHU8wwA9JXJekmvUExEOxPWwisLA=");
-            STEVE.playerName = "MHF_Steve";
-            STEVE.playerUUID = "c06f89064c8a49119c29ea1dbd1aab82";
-            STEVE.obtainedFrom = ObtainedFrom.MINECRAFT_ORIGINAL;
-            SKIN_CACHE.put(STEVE.playerName.toLowerCase(), STEVE);
-            //
-            ALEX = new Skin(
-                    "ewogICJ0aW1lc3RhbXAiIDogMTY1NjU3Nzg5MTQ2NywKICAicHJvZmlsZUlkIiA6ICI2YWI0MzE3ODg5ZmQ0OTA1OTdmNjBmNjdkOWQ3NmZkOSIsCiAgInByb2ZpbGVOYW1lIiA6ICJNSEZfQWxleCIsCiAgInNpZ25hdHVyZVJlcXVpcmVkIiA6IHRydWUsCiAgInRleHR1cmVzIiA6IHsKICAgICJTS0lOIiA6IHsKICAgICAgInVybCIgOiAiaHR0cDovL3RleHR1cmVzLm1pbmVjcmFmdC5uZXQvdGV4dHVyZS84M2NlZTVjYTZhZmNkYjE3MTI4NWFhMDBlODA0OWMyOTdiMmRiZWJhMGVmYjhmZjk3MGE1Njc3YTFiNjQ0MDMyIiwKICAgICAgIm1ldGFkYXRhIiA6IHsKICAgICAgICAibW9kZWwiIDogInNsaW0iCiAgICAgIH0KICAgIH0KICB9Cn0=",
-                    "d2dYqFQpP2ZjeUROSm23WTdWhWnuaW68v8Biw4towx04vJMRls95W/gmIFGa2Tq171yXHlE8kpP2KFe3jAC7qukkXjDiXSRdCSOYZPA7N91Uw6amyt7x5IKZ90QK8BxE1mCjV7KJNGZ28u8klbf1QUOB4fE27gEfQYGyEcSrkPa4e/QzmOGYbnyiIt36np/qBtWHf87brRdVeKRNfO/ExCJkKbwpKfyGf06luCAfUW9wuHkFURux9naU+ilk2ZHUsPVBdkmfOXZrdxxdpDE19W5VkFryMbtVP5XNEBVC7SAsllHXrf8nskgk+m57bCPMP6RF8k+h+mXIJMuQd7yd7azOAnyLlOoufyY1hs1Po+EGDOSQUUHQKTi7AEYp2C71DpkqpGuPCbL/DkxchblYW5iuIek+BmO3wXbmBPv+0gWkiP/c1n605X0g+h4oO5yQqyI8Fki9F2Hb8T5QeHmC3+yzVVf7gOQ6MB7bBt+uX9wcl5yYBDHbmYGZtbNko7dq584FZKRRWeVhxdcDUXfdfzKmNR73BUIEqzeyOh2hUrk47VHK5d5FajKzgi9j5U8D0EJKjVMPZiulcF0J/ZQ4EOxUkOTNPuphiu43j1C7NXZ4RaPFrSrg7QMsObitqLUP5Pmq15Edg7vpvYME8Fe5Ia8sXLbNDHd3AWuXnfpeAUE=");
-            ALEX.playerName = "MHF_Alex";
-            ALEX.playerUUID = "6ab4317889fd490597f60f67d9d76fd9";
-            ALEX.obtainedFrom = ObtainedFrom.MINECRAFT_ORIGINAL;
-            SKIN_CACHE.put(ALEX.playerName.toLowerCase(), ALEX);
-            //
-            LOCAL_SKIN_NAMES = new ArrayList<>();
-            Bukkit.getScheduler().runTaskAsynchronously(PlayerNPCPlugin.getInstance(), () ->{
-                File folder = new File(getSkinsFolderPath());
-                if(!folder.exists() || !folder.isDirectory()) return;
-                for (File skin : folder.listFiles()) {
-                    if (!skin.isDirectory()) continue;
-                    LOCAL_SKIN_NAMES.add(skin.getName());
+            try{
+                String path = "plugins/PlayerNPC/resources/avatar";
+                File avatarFolder = new File(path);
+                avatarFolder.mkdirs();
+                File unknownAvatarFile = new File(path + "/unknown.png");
+                if(!unknownAvatarFile.exists()){
+                    BufferedImage image = ImageIO.read(NPC.class.getResource("/resources/avatar/unknown.png"));
+                    unknownAvatarFile.createNewFile();
+                    ImageIO.write(image, "png", unknownAvatarFile);
                 }
-            });
+                AvatarLoadData avatarData = loadAvatarPixels(unknownAvatarFile);
+                if(avatarData.success){
+                    UNKNOWN_AVATAR = avatarData.avatarData;
+                    MOST_COMMON_COLOR_UNKNOWN_AVATAR = avatarData.mostCommonColor;
+                }
+            }
+            catch (Exception e) { NPCLib.printError(e); }
         }
 
-        private String texture;
-        private String signature;
-        private String textureID;
-        private String playerName;
-        private String playerUUID;
-        private net.md_5.bungee.api.ChatColor[][] avatar;
-        private net.md_5.bungee.api.ChatColor mostCommonColor;
-        private ObtainedFrom obtainedFrom;
-        private String lastUpdate;
+        protected Type type;
+        protected Texture texture;
+        protected String lastUpdate;
+        protected net.md_5.bungee.api.ChatColor[][] avatar;
+        protected net.md_5.bungee.api.ChatColor mostCommonColor;
 
-        protected Skin(String texture, String signature){
-            this.texture = texture;
-            this.signature = signature;
-            this.textureID = null;
-            this.playerName = null;
-            this.playerUUID = null;
+        protected Skin(@Nonnull String texture, @Nonnull String signature){
+            String textureID = getTextureID(texture);
+            Validate.notNull(textureID, "This texture is not valid");
+            Validate.isTrue(signature.length() == 684, "This signature is not valid");
+            this.texture = new Texture(texture, signature, textureID);
             this.avatar = null;
             this.mostCommonColor = null;
-            this.obtainedFrom = ObtainedFrom.NONE;
             resetLastUpdate();
         }
 
-        protected Skin(String[] data){
+        protected Skin(@Nonnull String[] data){
             this(data[0], data[1]);
+        }
+
+        protected record Texture(String value, String signature, String textureID){}
+
+        protected abstract void save() throws IOException;
+
+        protected abstract void delete();
+
+        protected abstract File getAvatarFile();
+
+        protected abstract File getTextureFile();
+
+        protected abstract File getDataFile();
+
+        protected abstract String getSkinFolderPath();
+
+        protected boolean needsToUpdate(Plugin plugin){
+            return needsToUpdate(this.lastUpdate, plugin);
+        }
+
+        protected static boolean needsToUpdate(String lastUpdate, Plugin plugin){
+            NPCLib.SkinUpdateFrequency frequency = NPCLib.getInstance().getPluginManager(plugin).getSkinUpdateFrequency();
+            return TimerUtils.getBetweenDatesString(lastUpdate, TimerUtils.getCurrentDate(), TimerUtils.DATE_FORMAT_LARGE, frequency.timeUnit()) > frequency.value();
+        }
+
+        protected void loadAvatar() {
+            if(!getAvatarFile().exists()) downloadImages();
+            try {
+                AvatarLoadData avatarLoadData = Skin.loadAvatarPixels(getAvatarFile());
+                if (avatarLoadData.success) {
+                    this.avatar = avatarLoadData.avatarData;
+                    this.mostCommonColor = avatarLoadData.mostCommonColor;
+                }
+            } catch (Exception e) { NPCLib.printError(e); }
+        }
+
+        protected void downloadImages(){
+            if(getTextureFile().exists() && getAvatarFile().exists()) return;
+            try{
+                URL url = new URL(getTextureURL());
+                BufferedImage bufferedImage = ImageIO.read(url);
+                getTextureFile().mkdirs();
+                ImageIO.write(bufferedImage, "png", getTextureFile());
+                //
+                BufferedImage bufferedImage2 = bufferedImage.getSubimage(8, 8, 8, 8);
+                BufferedImage bufferedImage3 = bufferedImage.getSubimage(40, 8, 8, 8);
+
+                BufferedImage avatarResult = new BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB);
+
+                Graphics g = avatarResult.getGraphics();
+                g.drawImage(bufferedImage2, 0, 0, null);
+                g.drawImage(bufferedImage3, 0, 0, null);
+
+                getAvatarFile().mkdirs();
+                ImageIO.write(avatarResult, "png", getAvatarFile());
+            }
+            catch (Exception e){ NPCLib.printError(e); }
+        }
+
+        public net.md_5.bungee.api.ChatColor[][] getAvatar() {
+            if(avatar == null) loadAvatar();
+            return avatar;
         }
 
         public void applyNPC(NPC npc){
@@ -2428,6 +2637,10 @@ public abstract class NPC {
             if(forceUpdate) npc.forceUpdate();
         }
 
+        public net.md_5.bungee.api.ChatColor getMostCommonColor() {
+            return mostCommonColor;
+        }
+
         public void applyNPCs(Collection<NPC> npcs){
             applyNPCs(npcs, false);
         }
@@ -2437,368 +2650,784 @@ public abstract class NPC {
         }
 
         public String getTexture() {
-            return texture;
+            return texture.value();
         }
 
         public String getSignature() {
-            return signature;
-        }
-
-        public String getPlayerName() {
-            return playerName;
-        }
-
-        public String getPlayerUUID() {
-            return playerUUID;
-        }
-
-        public ObtainedFrom getObtainedFrom() {
-            return obtainedFrom;
+            return texture.signature();
         }
 
         public String getLastUpdate() {
             return lastUpdate;
         }
 
-        public boolean canBeDeleted() {
-            return !isMinecraftOriginal();
-        }
-
-        public boolean canBeUpdated() { return !isMinecraftOriginal(); }
-
-        public boolean isMinecraftOriginal() {
-            return obtainedFrom.equals(ObtainedFrom.MINECRAFT_ORIGINAL);
+        public String getTextureID() {
+            return texture.textureID();
         }
 
         public Type getType(){
-            return playerName != null ? Type.PLAYER_SKIN : Type.CUSTOM_TEXTURE;
+            return type;
         }
 
-        private void resetLastUpdate(){
+        protected String getTextureURL(){
+            return "http://textures.minecraft.net/texture/" + getTextureID();
+        }
+
+        protected void resetLastUpdate(){
             this.lastUpdate = TimerUtils.getCurrentDate();
         }
 
-        private File getAvatarFile(){
-            return getAvatarFile(this.playerName);
-        }
-
-        private File getTextureFile(){
-            return getTextureFile(this.playerName);
-        }
-
-        private File getDataFile(){
-            return getDataFile(this.playerName);
-        }
-
-        private String getSkinFolderPath(){
-            return getSkinFolderPath(this.playerName);
-        }
-
-        private static File getAvatarFile(String playerName){
-            return new File(getSkinFolderPath(playerName) + "/avatar.png");
-        }
-
-        private static File getTextureFile(String playerName){
-            return new File(getSkinFolderPath(playerName) + "/texture.png");
-        }
-
-        private static File getDataFile(String playerName){
-            return new File(getSkinFolderPath(playerName) + "/data.yml");
-        }
-
-        private static String getSkinFolderPath(String playerName){
-            return getSkinsFolderPath() + playerName.toLowerCase();
-        }
-
-        private static String getSkinsFolderPath(){
-            return "plugins/PlayerNPC/persistent/skins/";
-        }
-
         public enum Type{
-            PLAYER_SKIN, CUSTOM_TEXTURE;
+            MINECRAFT, CUSTOM, MINESKIN;
         }
 
-        public enum ObtainedFrom{
-            MOJANG_API("§aMojang API"),
-            GAME_PROFILE("§aGame Profile"),
-            MINECRAFT_ORIGINAL("§aMinecraft"),
-            NONE("§cUnknown"),
-            ;
+        public String[] getTextureData() { return new String[]{texture.value(), texture.signature()}; }
 
-            private String title;
-
-            ObtainedFrom(String title){
-                this.title = title;
-            }
-
-            public String getTitle() {
-                return title;
-            }
+        private static String getSkinsFolderPath(Type type){
+            return "plugins/PlayerNPC/skins/" + type.name().toLowerCase() + "/";
         }
 
-        public net.md_5.bungee.api.ChatColor getMostCommonColor() {
-            return mostCommonColor;
+        public static net.md_5.bungee.api.ChatColor[][] getUnknownAvatar() {
+            return UNKNOWN_AVATAR;
         }
 
-        protected void loadAvatar(){
-            if(playerName == null) return;
-            if(!getAvatarFile().exists()) downloadAvatar(true);
-            if(loadAvatarPixels()) return;
-            downloadAvatar(false);
-            loadAvatarPixels();
+        public static net.md_5.bungee.api.ChatColor getMostCommonColorUnknownAvatar() {
+            return MOST_COMMON_COLOR_UNKNOWN_AVATAR;
         }
 
-        protected boolean loadAvatarPixels(){
-            try{
-                BufferedImage bufferedImage = ImageIO.read(getAvatarFile());
-                net.md_5.bungee.api.ChatColor[][] avatarData = new net.md_5.bungee.api.ChatColor[8][8];
-                Map m = new HashMap();
-                boolean loaded = false;
-                for(int y = 0; y < 8; y++) {
-                    for (int x = 0; x < 8; x++) {
-                        int color = bufferedImage.getRGB(x, y);
-                        int[] rgb = ColorUtils.getRGB(color);
-                        if(rgb[0] > 0 && rgb[1] > 0 && rgb[2] > 0) loaded = true;
-                        avatarData[x][y] = net.md_5.bungee.api.ChatColor.of(ColorUtils.getColorFromRGB(rgb));
-                        if (!ColorUtils.isGray(rgb)) {
-                            Integer counter = (Integer) m.get(color);
-                            if (counter == null)
-                                counter = 0;
-                            counter++;
-                            m.put(color, counter);
-                        }
+        protected static AvatarLoadData loadAvatarPixels(URL url) throws IOException {
+            return loadAvatarPixels(ImageIO.read(url));
+        }
+
+        protected static AvatarLoadData loadAvatarPixels(File file) throws IOException {
+            return loadAvatarPixels(ImageIO.read(file));
+        }
+
+        protected static AvatarLoadData loadAvatarPixels(BufferedImage bufferedImage){
+            net.md_5.bungee.api.ChatColor[][] avatarData = new net.md_5.bungee.api.ChatColor[8][8];
+            Map m = new HashMap();
+            boolean loaded = false;
+            for(int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    int color = bufferedImage.getRGB(x, y);
+                    int[] rgb = ColorUtils.getRGB(color);
+                    if(rgb[0] > 0 && rgb[1] > 0 && rgb[2] > 0) loaded = true;
+                    avatarData[x][y] = net.md_5.bungee.api.ChatColor.of(ColorUtils.getColorFromRGB(rgb));
+                    if (!ColorUtils.isGray(rgb)) {
+                        Integer counter = (Integer) m.get(color);
+                        if (counter == null)
+                            counter = 0;
+                        counter++;
+                        m.put(color, counter);
                     }
                 }
-                this.avatar = avatarData;
-                java.awt.Color mostCommon = ColorUtils.getMostCommonColour(m);
-                if(mostCommon != null) this.mostCommonColor = net.md_5.bungee.api.ChatColor.of(mostCommon);
-                return loaded;
             }
-            catch (Exception e){
-                NPCLib.printError(e);
-                return false;
+            java.awt.Color mostCommon = ColorUtils.getMostCommonColour(m);
+            net.md_5.bungee.api.ChatColor mostCommonColor = null;
+            if(mostCommon != null) mostCommonColor = net.md_5.bungee.api.ChatColor.of(mostCommon);
+            return new AvatarLoadData(loaded, mostCommonColor, avatarData);
+        }
+
+        protected static record AvatarLoadData (boolean success, net.md_5.bungee.api.ChatColor mostCommonColor, net.md_5.bungee.api.ChatColor[][] avatarData){}
+
+        @Nullable
+        protected static String getTextureID(String texture){
+            byte[] decodedBytes = Base64.getDecoder().decode(texture);
+            String decodedTexture = new String(decodedBytes);
+            JsonObject textureJSON = new JsonParser().parse(decodedTexture).getAsJsonObject();
+            JsonObject textureElement = textureJSON.get("textures").getAsJsonObject();
+            String textureURL = textureElement.get("SKIN").getAsJsonObject().get("url").getAsString();
+            if(textureURL != null){
+                String textureID = textureURL.replaceFirst("http://textures.minecraft.net/texture/", "");
+                return textureID;
             }
+            return null;
         }
 
-        protected void downloadAvatar(boolean uuid){
-            if(playerUUID == null || playerName == null) return;
-            try{
-                URL url = new URL("https://minotar.net/helm/" + (uuid ? playerUUID : playerName) + "/8.png");
-                BufferedImage bufferedImage = ImageIO.read(url);
-                getAvatarFile().mkdirs();
-                ImageIO.write(bufferedImage, "png", getAvatarFile());
-            }
-            catch (Exception e){ NPCLib.printError(e);; }
-        }
+        public static class Minecraft extends Skin{
 
-        public net.md_5.bungee.api.ChatColor[][] getAvatar() {
-            if(avatar == null) loadAvatar();
-            return avatar;
-        }
+            protected static final Skin.Minecraft STEVE;
+            protected static final Skin.Minecraft ALEX;
 
-        public String[] getTextureData() { return new String[]{texture, signature}; }
+            protected static final HashMap<String, NPC.Skin.Minecraft> SKIN_CACHE;
+            protected static final List<String> LOCAL_SKIN_NAMES;
 
-        public String getTextureID() {
-            return textureID;
-        }
-
-        public static Skin createCustomTextureSkin(String texture, String value){
-            return new Skin(texture, value);
-        }
-
-        @Deprecated
-        public static void fetchSkinAsync(Player player, Consumer<NPC.Skin> action){
-            fetchSkinAsync(NPCLib.getInstance().getPlugin(), player.getName(), action);
-        }
-
-        @Deprecated
-        public static void fetchSkinAsync(String playerName, Consumer<NPC.Skin> action){
-            fetchSkinAsync(NPCLib.getInstance().getPlugin(), playerName, false, action);
-        }
-
-        @Deprecated
-        public static void fetchSkinAsync(String playerName, boolean forceDownload, Consumer<NPC.Skin> action){
-            fetchSkinAsync(NPCLib.getInstance().getPlugin(), playerName, forceDownload, action);
-        }
-
-        public static void fetchSkinAsync(Plugin plugin, Player player, Consumer<NPC.Skin> action){
-            fetchSkinAsync(plugin, player.getName(), action);
-        }
-
-        public static void fetchSkinAsync(Plugin plugin, String playerName, Consumer<NPC.Skin> action){
-            fetchSkinAsync(plugin, playerName, false, action);
-        }
-
-        public static void fetchSkinAsync(Plugin plugin, String playerName, boolean forceDownload, Consumer<NPC.Skin> action){
-            final NPCLib.PluginManager pluginManager = NPCLib.getInstance().getPluginManager(plugin);
-            final String playerNameLowerCase = playerName.toLowerCase();
-            final String possibleUUID = playerName.length() >= 32 ? playerName.replaceAll("-", "") : null;
-            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, ()->{
-                if(!forceDownload && possibleUUID == null){
-                    if(SKIN_CACHE.containsKey(playerNameLowerCase)) {
-                        Skin skin = SKIN_CACHE.get(playerNameLowerCase);
-                        NPCLib.SkinUpdateFrequency frequency = pluginManager.getSkinUpdateFrequency();
-                        if(TimerUtils.getBetweenDatesString(skin.getLastUpdate(), TimerUtils.getCurrentDate(), TimerUtils.DATE_FORMAT_LARGE, frequency.timeUnit()) < frequency.value()){
-                            action.accept(skin);
-                            return;
-                        }
-                        else SKIN_CACHE.remove(playerNameLowerCase);
+            static{
+                SKIN_CACHE = new HashMap<>();
+                STEVE = new Skin.Minecraft(
+                        "ewogICJ0aW1lc3RhbXAiIDogMTY1NjUzMDcyOTgyNiwKICAicHJvZmlsZUlkIiA6ICJjMDZmODkwNjRjOGE0OTExOWMyOWVhMWRiZDFhYWI4MiIsCiAgInByb2ZpbGVOYW1lIiA6ICJNSEZfU3RldmUiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMWE0YWY3MTg0NTVkNGFhYjUyOGU3YTYxZjg2ZmEyNWU2YTM2OWQxNzY4ZGNiMTNmN2RmMzE5YTcxM2ViODEwYiIKICAgIH0KICB9Cn0=",
+                        "D5KDlE7KmMYeo+n0bY7kRjxdoZ8ondpgLC0tVcDW/wER9tRAWGlkaUyC4cUjkiYtMFANOxnPNz42iWg+gKAX/qE3lKoJpFw8LmgC587QpEDZTsIwzrIriDDiUc+RQ83VNzy9lkrzm+/llFhuPmONhWIeoVgXQYnJXFXOjTA3uiqHq6IJR4fZzD+0lSpr8jm0X1B+XAiAV7xbzMjg2woC3ur7+81Ub27MNGdAmI5eh50rqqjIHx+kRHJPPB3klbAdkTkcnF2rhDuP9jLtJbb17L+40yR8MH3G1AsRBg+N9MlGb4qF3fK9m2lDNxrGpVe+5fj4ffHnTJ680X9O8cnGxtHFyHm3I65iIhVgFY/DQQ6XSxLgPrmdyVOV98OATc7g2/fFpiI6aRzFrXvCLzXcBzmcayhv8BgG8yBlHdYmMZScjslLKjgWB9mgtOh5ZFFb3ZRkwPvdKUqCQHDPovo9K3LwyAtg9QwJ7u+HN03tpDWllXIjT3mKrtsfWMorNNQ5Bh1St0If4Dg00tpW/DUwNs+oua0PhN/DbFEe3aog2jVfzy3IAXqW2cqiZlnRSm55vMrr1CI45PgjP2LS1c9OYJJ3k+ov4IdvBpDTiG9PfsPWcwtqm8ujxy/TqIWfSajL/RP+TFDoN/F8j8HhHU8wwA9JXJekmvUExEOxPWwisLA=");
+                STEVE.playerName = "MHF_Steve";
+                STEVE.playerUUID = "c06f89064c8a49119c29ea1dbd1aab82";
+                STEVE.obtainedFrom = ObtainedFrom.MINECRAFT_ORIGINAL;
+                SKIN_CACHE.put(STEVE.playerName.toLowerCase(), STEVE);
+                //
+                ALEX = new Skin.Minecraft(
+                        "ewogICJ0aW1lc3RhbXAiIDogMTY1NjU3Nzg5MTQ2NywKICAicHJvZmlsZUlkIiA6ICI2YWI0MzE3ODg5ZmQ0OTA1OTdmNjBmNjdkOWQ3NmZkOSIsCiAgInByb2ZpbGVOYW1lIiA6ICJNSEZfQWxleCIsCiAgInNpZ25hdHVyZVJlcXVpcmVkIiA6IHRydWUsCiAgInRleHR1cmVzIiA6IHsKICAgICJTS0lOIiA6IHsKICAgICAgInVybCIgOiAiaHR0cDovL3RleHR1cmVzLm1pbmVjcmFmdC5uZXQvdGV4dHVyZS84M2NlZTVjYTZhZmNkYjE3MTI4NWFhMDBlODA0OWMyOTdiMmRiZWJhMGVmYjhmZjk3MGE1Njc3YTFiNjQ0MDMyIiwKICAgICAgIm1ldGFkYXRhIiA6IHsKICAgICAgICAibW9kZWwiIDogInNsaW0iCiAgICAgIH0KICAgIH0KICB9Cn0=",
+                        "d2dYqFQpP2ZjeUROSm23WTdWhWnuaW68v8Biw4towx04vJMRls95W/gmIFGa2Tq171yXHlE8kpP2KFe3jAC7qukkXjDiXSRdCSOYZPA7N91Uw6amyt7x5IKZ90QK8BxE1mCjV7KJNGZ28u8klbf1QUOB4fE27gEfQYGyEcSrkPa4e/QzmOGYbnyiIt36np/qBtWHf87brRdVeKRNfO/ExCJkKbwpKfyGf06luCAfUW9wuHkFURux9naU+ilk2ZHUsPVBdkmfOXZrdxxdpDE19W5VkFryMbtVP5XNEBVC7SAsllHXrf8nskgk+m57bCPMP6RF8k+h+mXIJMuQd7yd7azOAnyLlOoufyY1hs1Po+EGDOSQUUHQKTi7AEYp2C71DpkqpGuPCbL/DkxchblYW5iuIek+BmO3wXbmBPv+0gWkiP/c1n605X0g+h4oO5yQqyI8Fki9F2Hb8T5QeHmC3+yzVVf7gOQ6MB7bBt+uX9wcl5yYBDHbmYGZtbNko7dq584FZKRRWeVhxdcDUXfdfzKmNR73BUIEqzeyOh2hUrk47VHK5d5FajKzgi9j5U8D0EJKjVMPZiulcF0J/ZQ4EOxUkOTNPuphiu43j1C7NXZ4RaPFrSrg7QMsObitqLUP5Pmq15Edg7vpvYME8Fe5Ia8sXLbNDHd3AWuXnfpeAUE=");
+                ALEX.playerName = "MHF_Alex";
+                ALEX.playerUUID = "6ab4317889fd490597f60f67d9d76fd9";
+                ALEX.obtainedFrom = ObtainedFrom.MINECRAFT_ORIGINAL;
+                SKIN_CACHE.put(ALEX.playerName.toLowerCase(), ALEX);
+                //
+                LOCAL_SKIN_NAMES = new ArrayList<>();
+                Bukkit.getScheduler().runTaskAsynchronously(PlayerNPCPlugin.getInstance(), () ->{
+                    File folder = new File(getSkinsFolderPath(Type.MINECRAFT));
+                    if(!folder.exists() || !folder.isDirectory()) return;
+                    for (File skin : folder.listFiles()) {
+                        if (!skin.isDirectory()) continue;
+                        LOCAL_SKIN_NAMES.add(skin.getName());
                     }
-                    if(getDataFile(playerNameLowerCase).exists()){
-                        YamlConfiguration config = loadConfig(playerNameLowerCase);
-                        String lastUpdate = config.getString("lastUpdate");
-                        NPCLib.SkinUpdateFrequency frequency = pluginManager.getSkinUpdateFrequency();
-                        if(TimerUtils.getBetweenDatesString(lastUpdate, TimerUtils.getCurrentDate(), TimerUtils.DATE_FORMAT_LARGE, frequency.timeUnit()) < frequency.value()){
-                            Skin skin = new Skin(config.getString("texture.value"), config.getString("texture.signature"));
-                            skin.playerName = config.getString("player.name");
-                            skin.playerUUID = config.getString("player.id");
-                            skin.textureID = config.getString("texture.id");
-                            skin.obtainedFrom = ObtainedFrom.valueOf(config.getString("obtainedFrom"));
-                            skin.lastUpdate = config.getString("lastUpdate");
-                            SKIN_CACHE.put(playerNameLowerCase, skin);
-                            LOCAL_SKIN_NAMES.remove(playerName.toLowerCase());
-                            action.accept(skin);
-                            return;
+                });
+            }
+
+            protected String playerName;
+            protected String playerUUID;
+            protected ObtainedFrom obtainedFrom;
+
+            protected Minecraft(String texture, String signature) {
+                super(texture, signature);
+                this.type = Type.MINECRAFT;
+                this.playerName = null;
+                this.playerUUID = null;
+                this.obtainedFrom = ObtainedFrom.NONE;
+            }
+
+            protected Minecraft(String[] data) {
+                this(data[0], data[1]);
+            }
+
+            public String getPlayerName() {
+                return playerName;
+            }
+
+            public String getPlayerUUID() {
+                return playerUUID;
+            }
+
+            public ObtainedFrom getObtainedFrom() {
+                return obtainedFrom;
+            }
+
+            public boolean canBeDeleted() {
+                return !isMinecraftOriginal();
+            }
+
+            public boolean canBeUpdated() { return !isMinecraftOriginal(); }
+
+            public boolean isMinecraftOriginal() {
+                return obtainedFrom.equals(ObtainedFrom.MINECRAFT_ORIGINAL);
+            }
+
+            public NPC.Skin.Custom convertToCustomSkin(Plugin plugin, String skinName){
+                return Custom.createCustomSkin(plugin, skinName, texture.value, texture.signature);
+            }
+
+            public NPC.Skin.Custom convertToCustomSkin(Plugin plugin){
+                return Custom.createCustomSkin(plugin,texture.value, texture.signature);
+            }
+
+            @Override
+            protected File getAvatarFile(){
+                return getAvatarFile(this.playerName);
+            }
+
+            @Override
+            protected File getTextureFile(){
+                return getTextureFile(this.playerName);
+            }
+
+            @Override
+            protected File getDataFile(){
+                return getDataFile(this.playerName);
+            }
+
+            @Override
+            protected String getSkinFolderPath(){
+                return getSkinFolderPath(this.playerName);
+            }
+
+            private static File getAvatarFile(String playerName){
+                return new File(getSkinFolderPath(playerName) + "/avatar.png");
+            }
+
+            private static File getTextureFile(String playerName){
+                return new File(getSkinFolderPath(playerName) + "/texture.png");
+            }
+
+            private static File getDataFile(String playerName){
+                return new File(getSkinFolderPath(playerName) + "/data.yml");
+            }
+
+            private static String getSkinFolderPath(String playerName){
+                return getSkinsFolderPath(Type.MINECRAFT) + playerName.toLowerCase();
+            }
+
+            @Override
+            public void delete(){
+                if(!canBeDeleted()) throw new IllegalStateException("This skin cannot be deleted.");
+                String playerNameLowerCase = playerName.toLowerCase();
+                if(SKIN_CACHE.containsKey(playerNameLowerCase)) SKIN_CACHE.remove(playerNameLowerCase);
+                if(LOCAL_SKIN_NAMES.contains(playerNameLowerCase)) LOCAL_SKIN_NAMES.remove(playerNameLowerCase);
+                File folder = new File(getSkinFolderPath(playerNameLowerCase) + "/");
+                if(!folder.exists()) return;
+                try { NMSFileUtils.deleteDirectory(folder); } catch (Exception e) { NPCLib.printError(e); }
+            }
+
+            private static YamlConfiguration loadConfig(String playerName){
+                File file = getDataFile(playerName);
+                boolean exist = file.exists();
+                if(!exist) try{ file.createNewFile();} catch (Exception e){};
+                YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+                return config;
+            }
+
+            @Override
+            protected void save() throws IOException {
+                File file = getDataFile();
+                boolean exist = file.exists();
+                if(!exist) try{ file.createNewFile(); }catch (Exception e){}
+                YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+                config.set("player.name", this.playerName);
+                config.set("player.id", this.playerUUID);
+                config.set("texture.value", getTexture());
+                config.set("texture.signature", getSignature());
+                config.set("texture.id", getTextureID());
+                NMSFileConfiguration.setComments(config, "texture.id", Arrays.asList("Minecraft texture: " + getTextureURL()));
+                config.set("obtainedFrom", this.obtainedFrom.name());
+                super.resetLastUpdate();
+                config.set("lastUpdate", this.lastUpdate);
+                config.save(file);
+                Bukkit.getScheduler().runTaskAsynchronously(PlayerNPCPlugin.getInstance(), () -> downloadImages());
+            }
+
+            public static void fetchSkinAsync(Plugin plugin, org.bukkit.entity.Player player, Consumer<NPC.Skin.Minecraft> action){
+                Skin.Minecraft.fetchSkinAsync(plugin, player.getName(), action);
+            }
+
+            public static void fetchSkinAsync(Plugin plugin, String playerName, Consumer<NPC.Skin.Minecraft> action){
+                Skin.Minecraft.fetchSkinAsync(plugin, playerName, false, action);
+            }
+
+            public static void fetchSkinAsync(Plugin plugin, String playerName, boolean forceDownload, Consumer<NPC.Skin.Minecraft> action){
+                final String playerNameLowerCase = playerName.toLowerCase();
+                final String possibleUUID = playerName.length() >= 32 ? playerName.replaceAll("-", "") : null;
+                plugin.getServer().getScheduler().runTaskAsynchronously(plugin, ()->{
+                    if(!forceDownload && possibleUUID == null){
+                        if(SKIN_CACHE.containsKey(playerNameLowerCase)) {
+                            Skin.Minecraft skin = SKIN_CACHE.get(playerNameLowerCase);
+                            if(!skin.needsToUpdate(plugin)){
+                                action.accept(skin);
+                                return;
+                            }
+                            else SKIN_CACHE.remove(playerNameLowerCase);
+                        }
+                        if(getDataFile(playerNameLowerCase).exists()){
+                            YamlConfiguration config = loadConfig(playerNameLowerCase);
+                            String lastUpdate = config.getString("lastUpdate");
+                            if(!NPC.Skin.needsToUpdate(lastUpdate, plugin)){
+                                Skin.Minecraft skin = new Skin.Minecraft(config.getString("texture.value"), config.getString("texture.signature"));
+                                skin.playerName = config.getString("player.name");
+                                skin.playerUUID = config.getString("player.id");
+                                skin.obtainedFrom = Minecraft.ObtainedFrom.valueOf(config.getString("obtainedFrom"));
+                                skin.lastUpdate = lastUpdate;
+                                SKIN_CACHE.put(playerNameLowerCase, skin);
+                                LOCAL_SKIN_NAMES.remove(playerName.toLowerCase());
+                                action.accept(skin);
+                                return;
+                            }
                         }
                     }
-                }
-                Player player = possibleUUID == null ? Bukkit.getServer().getPlayerExact(playerName) : null;
-                if(Bukkit.getServer().getOnlineMode() && player != null){
-                    Skin skin = new Skin(getSkinGameProfile(player));
-                    skin.playerName = player.getName();
-                    skin.playerUUID = player.getUniqueId().toString().replaceAll("-", "");
-                    skin.obtainedFrom = ObtainedFrom.GAME_PROFILE;
-                    try { skin.saveSkin(); } catch (IOException e) { NPCLib.printError(e); }
-                    if(skin.getAvatarFile().exists()) skin.getAvatarFile().delete();
-                    SKIN_CACHE.put(playerNameLowerCase, skin);
-                    action.accept(skin);
-                    return;
-                }
-                else{
-                    try {
-                        String uuid = possibleUUID == null ? getUUID(playerName) : possibleUUID;
-                        HashMap<String, String> data = getProfileMojangServer(uuid);
-                        Skin skin = new Skin(data.get("texture.value"), data.get("texture.signature"));
-                        skin.playerName = data.get("name");
-                        skin.playerUUID = data.get("id");
-                        skin.obtainedFrom = ObtainedFrom.MOJANG_API;
-                        skin.saveSkin();
+                    org.bukkit.entity.Player player = possibleUUID == null ? Bukkit.getServer().getPlayerExact(playerName) : null;
+                    if(Bukkit.getServer().getOnlineMode() && player != null){
+                        Skin.Minecraft skin = new Skin.Minecraft(getSkinGameProfile(player));
+                        skin.playerName = player.getName();
+                        skin.playerUUID = player.getUniqueId().toString().replaceAll("-", "");
+                        skin.obtainedFrom = ObtainedFrom.GAME_PROFILE;
+                        try { skin.save(); } catch (IOException e) { NPCLib.printError(e); }
                         if(skin.getAvatarFile().exists()) skin.getAvatarFile().delete();
                         SKIN_CACHE.put(playerNameLowerCase, skin);
                         action.accept(skin);
+                        return;
                     }
-                    catch (Exception e) {
+                    else{
+                        try {
+                            String uuid = possibleUUID == null ? getUUID(playerName) : possibleUUID;
+                            HashMap<String, String> data = getProfileMojangServer(uuid);
+                            Skin.Minecraft skin = new Skin.Minecraft(data.get("texture.value"), data.get("texture.signature"));
+                            skin.playerName = data.get("name");
+                            skin.playerUUID = data.get("id");
+                            skin.obtainedFrom = Minecraft.ObtainedFrom.MOJANG_API;
+                            skin.save();
+                            skin.loadAvatar();
+                            SKIN_CACHE.put(playerNameLowerCase, skin);
+                            action.accept(skin);
+                        }
+                        catch (Exception e) {
+                            NPCLib.printError(e);
+                            action.accept(null);
+                        }
+                    }
+                });
+            }
+
+            public static List<String> getSuggestedSkinNames(){
+                List<String> suggested = new ArrayList<>();
+                Bukkit.getOnlinePlayers().forEach(x-> suggested.add(x.getName().toLowerCase()));
+                Skin.Minecraft.SKIN_CACHE.keySet().stream().filter(x -> !suggested.contains(x)).forEach(x-> suggested.add(SKIN_CACHE.get(x).getPlayerName().toLowerCase()));
+                Skin.Minecraft.LOCAL_SKIN_NAMES.stream().filter(x -> !suggested.contains(x)).forEach(x-> suggested.add(x.toLowerCase()));
+                if(!suggested.contains("sergiferry")) suggested.add("sergiferry");
+                return suggested;
+            }
+
+            private static String[] getSkinGameProfile(org.bukkit.entity.Player player){
+                try{
+                    EntityPlayer p = NMSCraftPlayer.getEntityPlayer(player);
+                    GameProfile profile = NMSEntityPlayer.getGameProfile(p);
+                    Property property = profile.getProperties().get("textures").iterator().next();
+                    String texture = property.getValue();
+                    String signature = property.getSignature();
+                    return new String[]{texture, signature};
+                }
+                catch (Exception e){
+                    NPCLib.printError(e);
+                    return NPC.Skin.Minecraft.getSteveSkin().getTextureData();
+                }
+            }
+
+            private static HashMap<String, String> getProfileMojangServer(String uuid) throws IOException {
+                HashMap<String, String> data = new HashMap<>();
+                URL url2 = new URL("https://sessionserver.mojang.com/session/minecraft/profile/" + uuid + "?unsigned=false");
+                InputStreamReader reader2 = new InputStreamReader(url2.openStream());
+                JsonObject profile = new JsonParser().parse(reader2).getAsJsonObject();
+                JsonObject property = profile.get("properties").getAsJsonArray().get(0).getAsJsonObject();
+                data.put("id", profile.get("id").getAsString());
+                data.put("name", profile.get("name").getAsString());
+                data.put("texture.value", property.get("value").getAsString());
+                data.put("texture.signature", property.get("signature").getAsString());
+                return data;
+            }
+
+            private static String getUUID(String name) throws IOException {
+                URL url = new URL("https://api.mojang.com/users/profiles/minecraft/" + name);
+                InputStreamReader reader = new InputStreamReader(url.openStream());
+                JsonObject property = new JsonParser().parse(reader).getAsJsonObject();
+                return property.get("id").getAsString();
+            }
+
+            public enum ObtainedFrom{
+                MOJANG_API("§aMojang API"),
+                GAME_PROFILE("§aGame Profile"),
+                MINECRAFT_ORIGINAL("§aMinecraft Original"),
+                NONE("§cUnknown"),
+                ;
+
+                private String title;
+
+                ObtainedFrom(String title){
+                    this.title = title;
+                }
+
+                public String getTitle() {
+                    return title;
+                }
+            }
+
+            public static Skin.Minecraft getSteveSkin(){ return STEVE; }
+
+            public static Skin.Minecraft getAlexSkin(){ return ALEX; }
+        }
+
+        public static class Custom extends Skin{
+
+            protected static final HashMap<String, NPC.Skin.Custom> SKIN_CACHE;
+
+            static{
+                SKIN_CACHE = new HashMap<>();
+            }
+
+            private final String skinName;
+            private final Plugin plugin;
+
+            private Custom(@Nonnull Plugin plugin, String skinName, String texture, String signature) {
+                super(texture, signature);
+                Validate.notNull(plugin, "Plugin cannot be null.");
+                super.type = Type.CUSTOM;
+                this.plugin = plugin;
+                this.skinName = skinName;
+            }
+
+            private Custom(Plugin plugin, String texture, String signature) {
+                this(plugin, null, texture, signature);
+            }
+
+            public String getSkinName() {
+                return skinName;
+            }
+
+            public String getFullSkinCode() {
+                if(skinName == null) return null;
+                return NPCLib.getFormattedName(plugin, skinName);
+            }
+
+            public PluginDescriptionFile getPluginInfo(){
+                return plugin.getDescription();
+            }
+
+            public void changeTexture(Plugin plugin, String texture, String signature){
+                Validate.isTrue(plugin.equals(this.plugin), "This plugin is not the owner of this custom skin.");
+                String textureID = getTextureID(texture);
+                Validate.notNull(textureID, "This texture is not correct.");
+                this.texture = new Texture(texture, signature, textureID);
+                super.resetLastUpdate();
+                if(getAvatarFile().exists()) getAvatarFile().delete();
+                if(getTextureFile().exists()) getTextureFile().delete();
+                try { save(); } catch (Exception e) { NPCLib.printError(e); }
+            }
+
+            @Nullable
+            public static void fetchCustomSkinAsync(@Nonnull Plugin skinPlugin, @Nonnull String skinName, @Nonnull Consumer<NPC.Skin.Custom> action){
+                Validate.notNull(new Object[] {skinPlugin, skinName});
+                String formattedName = NPCLib.getInstance().getFormattedName(skinPlugin, skinName);
+                fetchCustomSkinAsync(null, formattedName, action);
+            }
+
+            @Nullable
+            @Deprecated
+            public static void fetchCustomSkinAsync(@Nonnull String complexSkinName, @Nonnull Consumer<NPC.Skin.Custom> action){
+                Validate.notNull(new Object[] {complexSkinName, action});
+                Bukkit.getServer().getScheduler().runTaskAsynchronously(PlayerNPCPlugin.getInstance(), ()->{
+                    if(!SKIN_CACHE.containsKey(complexSkinName)) action.accept(null);
+                    action.accept(SKIN_CACHE.get(complexSkinName));
+                });
+            }
+
+            public static Skin.Custom getLoadedSkin(Plugin plugin, String skinName){
+                return SKIN_CACHE.get(NPCLib.getFormattedName(plugin, skinName));
+            }
+
+            public static Skin.Custom createCustomSkin(Plugin plugin, String skinName, String texture, String value){
+                Validate.isTrue(!SKIN_CACHE.containsKey(NPCLib.getInstance().getFormattedName(plugin, skinName)), "Custom texture skin with this name already exists.");
+                Skin.Custom custom = new Skin.Custom(plugin, skinName, texture, value);
+                SKIN_CACHE.put(NPCLib.getInstance().getFormattedName(plugin, skinName), custom);
+                return custom;
+            }
+
+            public static Skin.Custom createCustomSkin(Plugin plugin, String texture, String value){
+                return new Skin.Custom(plugin, null, texture, value);
+            }
+
+            public static List<String> getSuggestedSkinNames(){
+                List<String> suggested = new ArrayList<>();
+                Skin.Custom.SKIN_CACHE.keySet().stream().filter(x -> !suggested.contains(x)).forEach(x-> suggested.add(x));
+                return suggested;
+            }
+
+            @Override
+            protected void save() throws IOException {
+                if(this.skinName == null) return;
+                File file = getDataFile();
+                boolean exist = file.exists();
+                if(!exist) try{ file.createNewFile(); }catch (Exception e){}
+                YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+                config.set("name", this.skinName);
+                config.set("plugin", this.plugin.getName());
+                config.set("texture.value", this.texture.value());
+                config.set("texture.signature", this.texture.signature());
+                config.set("texture.id", this.texture.textureID());
+                NMSFileConfiguration.setComments(config, "texture.id", Arrays.asList("Minecraft texture: " + getTextureURL()));
+                super.resetLastUpdate();
+                config.set("lastUpdate", this.lastUpdate);
+                config.save(file);
+                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> downloadImages());
+            }
+
+            @Override
+            public void delete() {
+                if(skinName == null) return;
+                String formattedName = NPCLib.getInstance().getFormattedName(plugin, skinName);
+                if(SKIN_CACHE.containsKey(formattedName)) SKIN_CACHE.remove(formattedName);
+                File folder = new File(getSkinFolderPath(plugin, skinName) + "/");
+                if(!folder.exists()) return;
+                try { NMSFileUtils.deleteDirectory(folder); } catch (Exception e) { NPCLib.printError(e); }
+            }
+
+            @Override
+            protected void loadAvatar() {
+                if(this.skinName == null) return;
+                super.loadAvatar();
+            }
+
+            @Override
+            protected File getAvatarFile(){
+                return getAvatarFile(this.plugin, this.skinName);
+            }
+
+            @Override
+            protected File getTextureFile(){
+                return getTextureFile(this.plugin, this.skinName);
+            }
+
+            @Override
+            protected File getDataFile(){
+                return getDataFile(this.plugin, this.skinName);
+            }
+
+            @Override
+            protected String getSkinFolderPath(){
+                return getSkinFolderPath(this.plugin, this.skinName);
+            }
+
+            private static File getAvatarFile(Plugin plugin, String skinName){
+                return new File(getSkinFolderPath(plugin, skinName) + "/avatar.png");
+            }
+
+            private static File getTextureFile(Plugin plugin, String skinName){
+                return new File(getSkinFolderPath(plugin, skinName) + "/texture.png");
+            }
+
+            private static File getDataFile(Plugin plugin, String skinName){
+                return new File(getSkinFolderPath(plugin, skinName) + "/data.yml");
+            }
+
+            private static String getSkinFolderPath(Plugin plugin, String skinName){
+                return getSkinsFolderPath(Type.CUSTOM) + plugin.getName().toLowerCase() + "/" + skinName.toLowerCase();
+            }
+        }
+
+        public static class MineSkin extends Skin{
+
+            private static final HashMap<Integer, MineSkin> SKIN_CACHE;
+            protected static final List<String> LOCAL_SKIN_NAMES;
+            private static final MineskinClient MINESKIN_CLIENT;
+
+            static{
+                MINESKIN_CLIENT = new MineskinClient();
+                SKIN_CACHE = new HashMap<>();
+                LOCAL_SKIN_NAMES = new ArrayList<>();
+                Bukkit.getScheduler().runTaskAsynchronously(PlayerNPCPlugin.getInstance(), () ->{
+                    File folder = new File(getSkinsFolderPath(Type.MINESKIN));
+                    if(!folder.exists() || !folder.isDirectory()) return;
+                    for (File skin : folder.listFiles()) {
+                        if (!skin.isDirectory()) continue;
+                        LOCAL_SKIN_NAMES.add(skin.getName());
+                    }
+                });
+            }
+
+            public static List<String> getSuggestedSkinNames(){
+                List<String> suggested = new ArrayList<>();
+                SKIN_CACHE.keySet().stream().filter(x -> !suggested.contains(x)).forEach(x-> suggested.add(SKIN_CACHE.get(x).getId().toString()));
+                LOCAL_SKIN_NAMES.stream().filter(x -> !suggested.contains(x)).forEach(x-> suggested.add(x));
+                return suggested;
+            }
+
+            private String uuid; //UUID without "-"
+            private Integer id;
+            private Variant variant;
+
+            private MineSkin(String uuid, Integer id, String texture, String signature, Variant variant) {
+                super(texture, signature);
+                super.type = Type.MINESKIN;
+                this.uuid = uuid;
+                this.id = id;
+                this.variant = variant;
+            }
+
+            public static void generateSkinFromURLAsync(String url, BiConsumer<MineSkin, Exception> action){
+                Bukkit.getScheduler().runTaskAsynchronously(PlayerNPCPlugin.getInstance(), () -> {
+                    try {
+                        org.mineskin.data.Skin skin = MINESKIN_CLIENT.generateUrl(url, SkinOptions.none()).join();
+                        if(skin != null) fetchSkinAsync(PlayerNPCPlugin.getInstance(), "" + skin.id, false, mineSkin -> action.accept(mineSkin, null));
+                    } catch (Exception e){
                         NPCLib.printError(e);
+                        action.accept(null, e);
+                    }
+                });
+            }
+
+            @Nullable
+            public static void fetchSkinAsync(Plugin plugin, String id, boolean forceDownload, Consumer<MineSkin> action) {
+                plugin.getServer().getScheduler().runTaskAsynchronously(plugin, ()->{
+                    try {
+                        String possibleUUID = id.length() >= 32 ? id.replaceAll("-", "") : null;
+                        Integer possibleID = MathUtils.isInteger(id) ? Integer.valueOf(id) : null;
+                        if(id.startsWith("https://minesk.in/")) possibleUUID = id.replaceFirst("https://minesk\\.in/", "");
+                        String apiLink = "https://api.mineskin.org/get/";
+                        if(possibleUUID != null) apiLink = apiLink + "uuid/" + possibleUUID;
+                        else if(possibleID != null) apiLink = apiLink + "id/" + possibleID;
+                        if(possibleID == null && possibleUUID == null){
+                            action.accept(null);
+                            return;
+                        }
+                        //
+                        if(!forceDownload && possibleID != null){
+                            if(SKIN_CACHE.containsKey(possibleID)) {
+                                Skin.MineSkin skin = SKIN_CACHE.get(possibleID);
+                                if(!skin.needsToUpdate(plugin)){
+                                    action.accept(skin);
+                                    return;
+                                }
+                                else SKIN_CACHE.remove(possibleID);
+                            }
+                            if(getDataFile(possibleID).exists()){
+                                YamlConfiguration config = loadConfig(possibleID);
+                                String lastUpdate = config.getString("lastUpdate");
+                                if(!NPC.Skin.needsToUpdate(lastUpdate, plugin)){
+                                    Skin.MineSkin skin = new Skin.MineSkin( config.getString("mineskin.uuid"), config.getInt("mineskin.id"), config.getString("texture.value"), config.getString("texture.signature"), Variant.valueOf(config.getString("variant")));
+                                    skin.lastUpdate = lastUpdate;
+                                    skin.loadAvatar();
+                                    SKIN_CACHE.put(possibleID, skin);
+                                    if(LOCAL_SKIN_NAMES.contains(possibleID.toString())) LOCAL_SKIN_NAMES.remove(possibleID.toString());
+                                    action.accept(skin);
+                                    return;
+                                }
+                            }
+                        }
+                        //
+                        StringBuilder builder = new StringBuilder();
+                        HttpURLConnection httpURLConnection = (HttpURLConnection) (new URL(apiLink)).openConnection();
+                        httpURLConnection.setRequestMethod("GET");
+                        httpURLConnection.setDoOutput(true);
+                        httpURLConnection.setDoInput(true);
+                        httpURLConnection.connect();
+                        Scanner scanner = new Scanner(httpURLConnection.getInputStream());
+                        while (scanner.hasNextLine())
+                            builder.append(scanner.nextLine());
+                        scanner.close();
+                        httpURLConnection.disconnect();
+                        //
+                        JsonObject jsonObject = (JsonObject)(new JsonParser()).parse(builder.toString());
+                        JsonObject data = jsonObject.get("data").getAsJsonObject();
+                        JsonObject textures = data.get("texture").getAsJsonObject();
+                        String value = textures.get("value").getAsString();
+                        String signature = textures.get("signature").getAsString();
+                        String mineskinUUID = jsonObject.get("uuid").getAsString();
+                        Integer mineskinID = jsonObject.get("id").getAsInt();
+                        Variant variant = Variant.valueOf(jsonObject.get("variant").getAsString().toUpperCase());
+                        MineSkin mineSkin = new MineSkin(mineskinUUID, mineskinID, value, signature, variant);
+                        mineSkin.save();
+                        mineSkin.loadAvatar();
+                        SKIN_CACHE.put(mineskinID, mineSkin);
+                        action.accept(mineSkin);
+                    } catch (Exception exception) {
+                        NPCLib.printError(exception);
                         action.accept(null);
                     }
+                });
+            }
+
+            private static YamlConfiguration loadConfig(Integer id){
+                File file = getDataFile(id);
+                boolean exist = file.exists();
+                if(!exist) try{ file.createNewFile();} catch (Exception e){};
+                YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+                return config;
+            }
+
+            public String getUUID() {
+                return uuid;
+            }
+
+            public Integer getId() {
+                return id;
+            }
+
+            public String getMineSkinURL(){
+                return "https://minesk.in/" + uuid;
+            }
+
+            public Variant getVariant() {
+                return variant;
+            }
+
+            public NPC.Skin.Custom convertToCustomSkin(Plugin plugin, String skinName){
+                return Custom.createCustomSkin(plugin, skinName, texture.value(), texture.signature());
+            }
+
+            public NPC.Skin.Custom convertToCustomSkin(Plugin plugin){
+                return Custom.createCustomSkin(plugin,texture.value(), texture.signature());
+            }
+
+            @Override
+            protected void save() throws IOException {
+                File file = getDataFile();
+                boolean exist = file.exists();
+                if(!exist) try{ file.createNewFile(); }catch (Exception e){}
+                YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+                NMSFileConfiguration.setHeader(config, Arrays.asList(getMineSkinURL()));
+                config.set("mineskin.id", this.id);
+                config.set("mineskin.uuid", this.uuid);
+                config.set("texture.value", getTexture());
+                config.set("texture.signature", getSignature());
+                config.set("texture.id", getTextureID());
+                NMSFileConfiguration.setComments(config, "texture.id", Arrays.asList("Minecraft texture: " + getTextureURL()));
+                config.set("variant", this.variant.name());
+                super.resetLastUpdate();
+                config.set("lastUpdate", this.lastUpdate);
+                config.save(file);
+                Bukkit.getScheduler().runTaskAsynchronously(PlayerNPCPlugin.getInstance(), () -> downloadImages());
+            }
+
+            @Override
+            public void delete() {
+                if(SKIN_CACHE.containsKey(id)) SKIN_CACHE.remove(id);
+                if(LOCAL_SKIN_NAMES.contains(id.toString())) LOCAL_SKIN_NAMES.remove(id.toString());
+                File folder = new File(getSkinFolderPath(id) + "/");
+                if(!folder.exists()) return;
+                try { NMSFileUtils.deleteDirectory(folder); } catch (Exception e) { NPCLib.printError(e); }
+            }
+
+            @Override
+            protected File getAvatarFile(){
+                return getAvatarFile(this.id);
+            }
+
+            @Override
+            protected File getTextureFile(){
+                return getTextureFile(this.id);
+            }
+
+            @Override
+            protected File getDataFile(){
+                return getDataFile(this.id);
+            }
+
+            @Override
+            protected String getSkinFolderPath(){
+                return getSkinFolderPath(this.id);
+            }
+
+            private static File getAvatarFile(Integer id){
+                return new File(getSkinFolderPath(id) + "/avatar.png");
+            }
+
+            private static File getTextureFile(Integer id){
+                return new File(getSkinFolderPath(id) + "/texture.png");
+            }
+
+            private static File getDataFile(Integer id){
+                return new File(getSkinFolderPath(id) + "/data.yml");
+            }
+
+            private static String getSkinFolderPath(Integer id){
+                return getSkinsFolderPath(Type.MINESKIN) + id.toString();
+            }
+
+            public enum Variant{
+                CLASSIC(4), SLIM(3);
+
+                private int pixels;
+
+                Variant(int pixels){
+                    this.pixels = pixels;
                 }
-            });
-        }
 
-        public void delete(){
-            if(!canBeDeleted()) throw new IllegalStateException("This skin cannot be deleted.");
-            String playerNameLowerCase = playerName.toLowerCase();
-            if(SKIN_CACHE.containsKey(playerNameLowerCase)) SKIN_CACHE.remove(playerNameLowerCase);
-            File folder = new File(getSkinFolderPath(playerNameLowerCase) + "/");
-            try { FileUtils.deleteDirectory(folder); } catch (IOException e) { NPCLib.printError(e); }
-            if(LOCAL_SKIN_NAMES.contains(playerNameLowerCase)) LOCAL_SKIN_NAMES.remove(playerNameLowerCase);
-        }
-
-        private static YamlConfiguration loadConfig(String playerName){
-            File file = getDataFile(playerName);
-            boolean exist = file.exists();
-            if(!exist) try{ file.createNewFile();} catch (Exception e){};
-            YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
-            return config;
-        }
-
-        private void saveSkin() throws IOException {
-            File file = getDataFile();
-            boolean exist = file.exists();
-            if(!exist) try{ file.createNewFile(); }catch (Exception e){}
-            YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
-            config.set("player.name", this.playerName);
-            config.set("player.id", this.playerUUID);
-            config.set("texture.value", this.texture);
-            config.set("texture.signature", this.signature);
-            config.set("obtainedFrom", this.obtainedFrom.name());
-            resetLastUpdate();
-            config.set("lastUpdate", this.lastUpdate);
-            String textureURL = null;
-            try{
-                byte[] decodedBytes = Base64.getDecoder().decode(this.texture);
-                String decodedTexture = new String(decodedBytes);
-                JsonObject textureJSON = new JsonParser().parse(decodedTexture).getAsJsonObject();
-                JsonObject textureElement = textureJSON.get("textures").getAsJsonObject();
-                textureURL = textureElement.get("SKIN").getAsJsonObject().get("url").getAsString();
-                if(textureURL != null){
-                    String textureID = textureURL.replaceFirst("http://textures.minecraft.net/texture/", "");
-                    config.set("texture.id", textureID);
-                    config.setComments("texture.id", Arrays.asList("Minecraft texture: " + textureURL));
-                    this.textureID = textureID;
+                public int getPixels() {
+                    return pixels;
                 }
             }
-            catch (Exception e){ NPCLib.printError(e); }
-            config.save(file);
-            if(textureURL == null) return;
-            final String urlSkin = textureURL;
-            Bukkit.getScheduler().runTaskAsynchronously(PlayerNPCPlugin.getInstance(), () ->{
-                try{
-                    URL url = new URL(urlSkin);
-                    BufferedImage bufferedImage = ImageIO.read(url);
-                    getTextureFile().mkdirs();
-                    ImageIO.write(bufferedImage, "png", getTextureFile());
-                }
-                catch (Exception e){ NPCLib.printError(e); }
-            });
         }
-
-        public static List<String> getSuggestedSkinNames(){
-            List<String> suggested = new ArrayList<>();
-            Bukkit.getOnlinePlayers().forEach(x-> suggested.add(x.getName().toLowerCase()));
-            Skin.SKIN_CACHE.keySet().stream().filter(x -> !suggested.contains(x)).forEach(x-> suggested.add(SKIN_CACHE.get(x).getPlayerName().toLowerCase()));
-            Skin.LOCAL_SKIN_NAMES.stream().filter(x -> !suggested.contains(x)).forEach(x-> suggested.add(x.toLowerCase()));
-            return suggested;
-        }
-
-        private static String[] getSkinGameProfile(Player player){
-            try{
-                EntityPlayer p = NMSCraftPlayer.getEntityPlayer(player);
-                GameProfile profile = NMSEntityPlayer.getGameProfile(p);
-                Property property = profile.getProperties().get("textures").iterator().next();
-                String texture = property.getValue();
-                String signature = property.getSignature();
-                return new String[]{texture, signature};
-            }
-            catch (Exception e){
-                NPCLib.printError(e);
-                return NPC.Skin.getSteveSkin().getTextureData();
-            }
-        }
-
-        private static HashMap<String, String> getProfileMojangServer(String uuid) throws IOException {
-            HashMap<String, String> data = new HashMap<>();
-            URL url2 = new URL("https://sessionserver.mojang.com/session/minecraft/profile/" + uuid + "?unsigned=false");
-            InputStreamReader reader2 = new InputStreamReader(url2.openStream());
-            JsonObject profile = new JsonParser().parse(reader2).getAsJsonObject();
-            JsonObject property = profile.get("properties").getAsJsonArray().get(0).getAsJsonObject();
-            data.put("id", profile.get("id").getAsString());
-            data.put("name", profile.get("name").getAsString());
-            data.put("texture.value", property.get("value").getAsString());
-            data.put("texture.signature", property.get("signature").getAsString());
-            return data;
-        }
-
-        private static String getUUID(String name) throws IOException {
-            URL url = new URL("https://api.mojang.com/users/profiles/minecraft/" + name);
-            InputStreamReader reader = new InputStreamReader(url.openStream());
-            JsonObject property = new JsonParser().parse(reader).getAsJsonObject();
-            return property.get("id").getAsString();
-        }
-
-        public static Skin getSteveSkin(){ return STEVE; }
-
-        public static Skin getAlexSkin(){ return ALEX; }
 
         /**
          * @since 2022.3
@@ -3324,7 +3953,7 @@ public abstract class NPC {
                 }
                 if(false && npc instanceof NPC.Personal){
                     Personal personal = (Personal) npc;
-                    personal.getPlayer().sendMessage("", "", "", "", "", "", "", "", "");
+                    NMSPlayer.sendMessage(personal.getPlayer(), "", "", "", "", "", "", "", "", "");
                     personal.getPlayer().sendMessage("Block in leg " + blockInLeg.getType() + " " + blockInLeg.getType().isSolid());
                     personal.getPlayer().sendMessage("Block in foot " + blockInFoot.getType() + " " + blockInFoot.getType().isSolid());
                     personal.getPlayer().sendMessage("moveY " + moveY);
@@ -3746,18 +4375,33 @@ public abstract class NPC {
 
         private Interact(){}
 
-        public abstract static class ClickAction {
+        private static void test(ClickAction clickAction, Player player){
+            clickAction.execute(player);
+        }
 
-            private final NPC npc;
-            private final NPC.Interact.Actions.Type actionType;
+        public abstract static class ClickAction{
+
+            protected final NPC npc;
+            protected final NPC.Interact.Actions.Type actionType;
+            protected final HashMap<Player, Long> lastTimeExecuted;
+            protected boolean enabled;
             protected NPC.Interact.ClickType clickType;
             protected BiConsumer<NPC, Player> action;
+            protected Long delayTicks;
+            protected Long cooldownMilliseconds;
+            protected BukkitTask executingTask;
+            protected List<Conditions.Condition> conditions;
 
             protected ClickAction(NPC npc, NPC.Interact.Actions.Type actionType, NPC.Interact.ClickType clickType) {
                 this.npc = npc;
                 this.actionType = actionType;
                 if(clickType == null) clickType = ClickType.EITHER;
                 this.clickType = clickType;
+                this.delayTicks = 0L;
+                this.enabled = true;
+                this.cooldownMilliseconds = npc.getInteractCooldown();
+                this.lastTimeExecuted = new HashMap<>();
+                this.conditions = new ArrayList<>();
             }
 
             public String getReplacedString(Player player, String s) {
@@ -3778,47 +4422,451 @@ public abstract class NPC {
             }
 
             protected void execute(Player player){
-                action.accept(npc, player);
+                if(!enabled) return;
+                if(executingTask != null) return;
+                if(delayTicks >= 1) executingTask = Bukkit.getScheduler().runTaskLater(npc.getPlugin(), () -> executeAction(player), delayTicks);
+                else executeAction(player);
             }
 
+            private void executeAction(Player player){
+                if(lastTimeExecuted.containsKey(player) && System.currentTimeMillis() - lastTimeExecuted.get(player) < cooldownMilliseconds) return;
+                for(Conditions.Condition condition : conditions){
+                    if(!condition.test(npc, player)) return;
+                }
+                action.accept(npc, player);
+                lastTimeExecuted.put(player, System.currentTimeMillis());
+                clearExecutingTask();
+            }
+
+            private void clearExecutingTask(){
+                if(executingTask != null && !executingTask.isCancelled()) executingTask.cancel();
+                executingTask = null;
+            }
+
+            public Long getDelayTicks() {
+                return delayTicks;
+            }
+
+            public void setDelayTicks(Long delayTicks) {
+                if(delayTicks < 0) delayTicks = 0L;
+                this.delayTicks = delayTicks;
+            }
+
+            public Long getCooldownMilliseconds() {
+                return cooldownMilliseconds;
+            }
+
+            public void setCooldownMilliseconds(Long cooldownMilliseconds) {
+                if(cooldownMilliseconds < npc.getInteractCooldown()) cooldownMilliseconds = npc.getInteractCooldown();
+                this.cooldownMilliseconds = cooldownMilliseconds;
+            }
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public void setClickType(@Nonnull ClickType clickType) {
+                Validate.notNull(clickType);
+                this.clickType = clickType;
+            }
+
+            public List<Conditions.Condition> getConditions() {
+                return conditions;
+            }
+
+            public void addCondition(Conditions.Condition condition){
+                this.conditions.add(condition);
+            }
         }
 
         public static class Actions{
 
             private Actions() {}
 
-            public enum Type{
+            public enum Type {
+                CONSOLE_PERFORM_COMMAND,
                 CUSTOM_ACTION,
-                SEND_MESSAGE,
-                SEND_ACTIONBAR_MESSAGE,
-                SEND_TITLE_MESSAGE,
-                RUN_PLAYER_COMMAND,
-                RUN_CONSOLE_COMMAND,
-                CONNECT_BUNGEE_SERVER,
-                TELEPORT_TO_LOCATION;
+                NPC_PLAY_ANIMATION,
+                NPC_SET_CUSTOM_DATA,
+                @Deprecated PLAYER_CLEAR_POTION_EFFECT,
+                PLAYER_CONNECT_BUNGEE_SERVER,
+                PLAYER_GIVE_ITEM,
+                @Deprecated PLAYER_GIVE_KIT,
+                @Deprecated PLAYER_GIVE_POTION_EFFECT,
+                PLAYER_OPEN_BOOK,
+                @Deprecated PLAYER_OPEN_ENCHANTING, //Not working
+                PLAYER_OPEN_WORKBENCH,
+                PLAYER_PERFORM_COMMAND,
+                PLAYER_PLAY_SOUND, //WIP
+                PLAYER_SEND_ACTIONBAR_MESSAGE,
+                PLAYER_SEND_CHAT_MESSAGE,
+                PLAYER_SEND_TITLE_MESSAGE,
+                PLAYER_TELEPORT_TO_LOCATION,
+                ;
+
+                public boolean isDeprecated() {
+                    try {
+                        return NPC.Interact.Actions.Type.class.getField(this.name()).isAnnotationPresent(Deprecated.class);
+                    } catch (NoSuchFieldException | SecurityException e) {
+                        return false;
+                    }
+                }
             }
 
-            public static class Custom extends ClickAction{
+            @Deprecated
+            protected enum LegacyType {
+                CONNECT_BUNGEE_SERVER(Type.PLAYER_CONNECT_BUNGEE_SERVER),
+                CUSTOM_ACTION(Type.CUSTOM_ACTION),
+                GIVE_PLAYER_ITEM(Type.PLAYER_GIVE_ITEM),
+                RUN_CONSOLE_COMMAND(Type.CONSOLE_PERFORM_COMMAND),
+                RUN_PLAYER_COMMAND(Type.PLAYER_PERFORM_COMMAND),
+                SEND_ACTIONBAR_MESSAGE(Type.PLAYER_SEND_ACTIONBAR_MESSAGE),
+                SEND_CHAT_MESSAGE(Type.PLAYER_SEND_CHAT_MESSAGE),
+                SEND_TITLE_MESSAGE(Type.PLAYER_SEND_TITLE_MESSAGE),
+                SET_CUSTOM_DATA(Type.NPC_SET_CUSTOM_DATA),
+                TELEPORT_PLAYER_TO_LOCATION(Type.PLAYER_TELEPORT_TO_LOCATION),
+                ;
 
-                protected Custom(NPC npc, NPC.Interact.ClickType clickType, BiConsumer<NPC, Player> customAction) {
+                protected final Type type;
+
+                LegacyType(Type type){
+                    this.type = type;
+                }
+            }
+
+            public static class CustomAction extends ClickAction{
+
+                protected CustomAction(NPC npc, NPC.Interact.ClickType clickType, BiConsumer<NPC, org.bukkit.entity.Player> customAction) {
                     super(npc, NPC.Interact.Actions.Type.CUSTOM_ACTION, clickType);
                     super.action = customAction;
                 }
 
             }
 
-            public static class Message extends ClickAction{
+            public static class SetCustomData extends ClickAction{
 
-                private final String[] messages;
+                private final String key;
+                private final String value;
+                private boolean checkIfSame;
 
-                protected Message(NPC npc, NPC.Interact.ClickType clickType, String... message) {
-                    super(npc, NPC.Interact.Actions.Type.SEND_MESSAGE, clickType);
-                    this.messages = message;
-                    super.action = (npc1, player) -> Arrays.stream(getMessages()).toList().forEach(x-> player.sendMessage(getReplacedString(player,x)));
+                protected SetCustomData(NPC npc, NPC.Interact.ClickType clickType, String key, String value) {
+                    super(npc, Type.NPC_SET_CUSTOM_DATA, clickType);
+                    this.key = key;
+                    this.value = value;
+                    this.checkIfSame = false;
+                    super.action = (npc1, player) -> {
+                        String replacedKey = getReplacedString(player, getKey());
+                        String replacedValue = getReplacedString(player, getValue());
+                        if(checkIfSame && npc1.hasCustomData(replacedKey) && npc1.getCustomData(replacedKey).equals(replacedValue)) return;
+                        npc1.setCustomData(getReplacedString(player, getKey()), getReplacedString(player, getValue()));
+                    };
                 }
 
-                public String[] getMessages() {
-                    return messages;
+                public boolean isCheckIfSame() {
+                    return checkIfSame;
+                }
+
+                public void setCheckIfSame(boolean checkIfSame) {
+                    this.checkIfSame = checkIfSame;
+                }
+
+                public String getKey() {
+                    return key;
+                }
+
+                public String getValue() {
+                    return value;
+                }
+            }
+
+            public static class PlayAnimation extends ClickAction{
+
+                private final Animation animation;
+
+                protected PlayAnimation(NPC npc, NPC.Interact.ClickType clickType, Animation animation) {
+                    super(npc, Type.NPC_PLAY_ANIMATION, clickType);
+                    this.animation = animation;
+                    super.action = (npc1, player) -> npc1.playAnimation(getAnimation());
+                }
+
+                public Animation getAnimation() {
+                    return animation;
+                }
+
+            }
+
+            public static class Player{
+
+                private Player(){}
+
+                public static class PlaySound extends ClickAction{
+
+                    private Sound sound;
+                    private float volume;
+                    private float pitch;
+
+                    protected PlaySound(NPC npc, ClickType clickType, Sound sound) {
+                        super(npc, Type.PLAYER_PLAY_SOUND, clickType);
+                        this.sound = sound;
+                        super.action = (npc1, player) -> player.playSound(npc1.getLocation(), getSound(), getVolume(), getPitch());
+                    }
+
+                    public Sound getSound() {
+                        return sound;
+                    }
+
+                    public float getVolume() {
+                        return volume;
+                    }
+
+                    public float getPitch() {
+                        return pitch;
+                    }
+
+                    public void setVolume(Float soundVolume) {
+                        if(soundVolume <= 0.1) soundVolume = 0.1F;
+                        if(soundVolume >= 1.0) soundVolume = 1.0F;
+                        this.volume = (float) (Math.round(soundVolume * 10.0) / 10.0);
+                    }
+
+                    public void setPitch(Float soundPitch) {
+                        if(soundPitch <= 0.5) soundPitch = 0.5F;
+                        if(soundPitch >= 2.0) soundPitch = 2.0F;
+                        this.pitch = (float) (Math.round(soundPitch * 10.0) / 10.0);
+                    }
+                }
+
+                public static class SendChatMessage extends ClickAction{
+
+                    private final String[] messages;
+
+                    protected SendChatMessage(NPC npc, NPC.Interact.ClickType clickType, String... message) {
+                        super(npc, Type.PLAYER_SEND_CHAT_MESSAGE, clickType);
+                        this.messages = message;
+                        super.action = (npc1, player) -> Arrays.stream(getMessages()).toList().forEach(x-> player.sendMessage(getReplacedString(player,x)));
+                    }
+
+                    public String[] getMessages() {
+                        return messages;
+                    }
+
+                }
+
+                public static class PerformCommand extends NPC.Interact.Actions.Command{
+
+                    protected PerformCommand(NPC npc, NPC.Interact.ClickType clickType, String command) {
+                        super(npc, NPC.Interact.Actions.Type.PLAYER_PERFORM_COMMAND, clickType, command);
+                        super.action = (npc1, player) -> Bukkit.getServer().dispatchCommand(player, getReplacedString(player, super.getCommand()));
+                    }
+
+                }
+
+                public static class SendTitleMessage extends ClickAction{
+
+                    private final String title;
+                    private final String subtitle;
+                    private Integer fadeIn;
+                    private Integer stay;
+                    private Integer fadeOut;
+
+                    protected SendTitleMessage(NPC npc, NPC.Interact.ClickType clickType, String title, String subtitle, Integer fadeIn, Integer stay, Integer fadeOut) {
+                        super(npc, Type.PLAYER_SEND_TITLE_MESSAGE, clickType);
+                        this.title = title;
+                        this.subtitle = subtitle;
+                        this.fadeIn = fadeIn;
+                        this.stay = stay;
+                        this.fadeOut = fadeOut;
+                        super.action = (npc1, player) -> player.sendTitle("§f" + getReplacedString(player,getTitle()), getReplacedString(player,getSubtitle()), getFadeIn(), getStay(), getFadeOut());
+                    }
+
+                    public String getTitle() {
+                        return title;
+                    }
+
+                    public String getSubtitle() {
+                        return subtitle;
+                    }
+
+                    public Integer getFadeIn() {
+                        return fadeIn;
+                    }
+
+                    public Integer getStay() {
+                        return stay;
+                    }
+
+                    public Integer getFadeOut() {
+                        return fadeOut;
+                    }
+
+                    public void setFadeIn(Integer fadeIn) {
+                        this.fadeIn = fadeIn;
+                    }
+
+                    public void setStay(Integer stay) {
+                        this.stay = stay;
+                    }
+
+                    public void setFadeOut(Integer fadeOut) {
+                        this.fadeOut = fadeOut;
+                    }
+
+                }
+
+                public static class SendActionBarMessage extends ClickAction{
+
+                    private final String message;
+
+                    protected SendActionBarMessage(NPC npc, NPC.Interact.ClickType clickType, String message) {
+                        super(npc, Type.PLAYER_SEND_ACTIONBAR_MESSAGE, clickType);
+                        this.message = message;
+                        super.action = (npc1, player) -> player.spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(getReplacedString(player, getMessage())));
+                    }
+
+                    public String getMessage() {
+                        return message;
+                    }
+                }
+
+                public static class ConnectBungeeServer extends ClickAction{
+
+                    private final String server;
+
+                    protected ConnectBungeeServer(NPC npc, NPC.Interact.ClickType clickType, String server) {
+                        super(npc, Type.PLAYER_CONNECT_BUNGEE_SERVER, clickType);
+                        this.server = server;
+                        super.action = (npc1, player) -> {
+                            if(!Bukkit.getServer().getMessenger().isOutgoingChannelRegistered(npc1.getPlugin(), "BungeeCord")) Bukkit.getServer().getMessenger().registerOutgoingPluginChannel(npc1.getPlugin(), "BungeeCord");
+                            ByteArrayDataOutput out = ByteStreams.newDataOutput();
+                            out.writeUTF("Connect");
+                            out.writeUTF(getReplacedString(player, getServer()));
+                            player.sendPluginMessage(npc1.getPlugin(), "BungeeCord", out.toByteArray());
+                        };
+                    }
+
+                    public String getServer() {
+                        return server;
+                    }
+                }
+
+                public static class TeleportToLocation extends ClickAction{
+
+                    private final Location location;
+
+                    protected TeleportToLocation(NPC npc, NPC.Interact.ClickType clickType, Location location) {
+                        super(npc, Type.PLAYER_TELEPORT_TO_LOCATION, clickType);
+                        this.location = location;
+                        super.action = (npc1, player) -> player.teleport(getLocation());
+                    }
+
+                    public Location getLocation() {
+                        return location;
+                    }
+                }
+
+                public static class GiveItem extends ClickAction{
+
+                    private final ItemStack itemStack;
+                    private GiveType giveType;
+
+                    protected GiveItem(NPC npc, NPC.Interact.ClickType clickType, ItemStack itemStack) {
+                        super(npc, Type.PLAYER_GIVE_ITEM, clickType);
+                        this.itemStack = itemStack;
+                        setGiveType(GiveType.ADD_ITEM);
+                    }
+
+                    public void setGiveType(GiveType giveType) {
+                        if(giveType.equals(GiveType.ADD_ITEM)) super.action = (npc1, player) -> player.getInventory().addItem(getItemStack());
+                        if(giveType.equals(GiveType.SET_ITEM_MAIN_HAND)) super.action = (npc1, player) -> player.getInventory().setItemInMainHand(getItemStack());
+                        if(giveType.equals(GiveType.SET_ITEM_OFF_HAND)) super.action = (npc1, player) -> player.getInventory().setItemInOffHand(getItemStack());
+                        if(giveType.equals(GiveType.SET_EQUIPMENT)) super.action = (npc1, player) -> {
+                            if(getItemStack().getType().name().contains("_HELMET")) player.getInventory().setHelmet(getItemStack());
+                            if(getItemStack().getType().name().contains("_CHESTPLATE")) player.getInventory().setChestplate(getItemStack());
+                            if(getItemStack().getType().name().contains("_LEGGINGS")) player.getInventory().setLeggings(getItemStack());
+                            if(getItemStack().getType().name().contains("_BOOTS")) player.getInventory().setBoots(getItemStack());
+                        };
+                        this.giveType = giveType;
+                    }
+
+                    public ItemStack getItemStack() {
+                        return itemStack;
+                    }
+
+                    public GiveType getGiveType() {
+                        return giveType;
+                    }
+
+                    public enum GiveType{
+                        ADD_ITEM, SET_ITEM_MAIN_HAND, SET_ITEM_OFF_HAND, SET_EQUIPMENT;
+                    }
+                }
+
+                public static class GiveKit extends ClickAction{
+
+                    private final NPC.Inventory.Kit kit;
+
+                    protected GiveKit(NPC npc, NPC.Interact.ClickType clickType, NPC.Inventory.Kit kit) {
+                        super(npc, Type.PLAYER_GIVE_KIT, clickType);
+                        this.kit = kit;
+                        super.action = (npc1, player) -> getKit().giveKit(player);
+                    }
+
+                    public Inventory.Kit getKit() {
+                        return kit;
+                    }
+                }
+
+                public static class OpenWorkbench extends ClickAction{
+
+                    protected OpenWorkbench(NPC npc, ClickType clickType) {
+                        super(npc, Type.PLAYER_OPEN_WORKBENCH, clickType);
+                        super.action = (npc1, player) -> player.openWorkbench(player.getLocation(), true);
+                    }
+
+                }
+
+                @Deprecated
+                public static class OpenEnchanting extends ClickAction{
+
+                    protected OpenEnchanting(NPC npc, ClickType clickType) {
+                        super(npc, Type.PLAYER_OPEN_ENCHANTING, clickType);
+                        super.action = (npc1, player) -> player.openEnchanting(player.getLocation(), true);
+                    }
+
+                }
+
+                public static class OpenBook extends ClickAction{
+
+                    protected ItemStack book;
+
+                    protected OpenBook(NPC npc, ClickType clickType, ItemStack book) {
+                        super(npc, Type.PLAYER_OPEN_BOOK, clickType);
+                        this.book = book;
+                        super.action = (npc1, player) -> player.openBook(getBook());
+                    }
+
+                    public ItemStack getBook() {
+                        return book;
+                    }
+                }
+
+            }
+
+            public static class Console{
+
+                private Console() {}
+
+                public static class PerformCommand extends NPC.Interact.Actions.Command{
+
+                    protected PerformCommand(NPC npc, NPC.Interact.ClickType clickType, String command) {
+                        super(npc, Type.CONSOLE_PERFORM_COMMAND, clickType, command);
+                        super.action = (npc1, player) -> Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), getReplacedString(player, super.getCommand()));
+                    }
+
                 }
             }
 
@@ -3831,117 +4879,8 @@ public abstract class NPC {
                     this.command = command;
                 }
 
-                protected String getCommand() {
+                public String getCommand() {
                     return command;
-                }
-            }
-
-            public static class PlayerCommand extends NPC.Interact.Actions.Command{
-
-                protected PlayerCommand(NPC npc, NPC.Interact.ClickType clickType, String command) {
-                    super(npc, NPC.Interact.Actions.Type.RUN_PLAYER_COMMAND, clickType, command);
-                    super.action = (npc1, player) -> Bukkit.getServer().dispatchCommand(player, getReplacedString(player, super.getCommand()));
-                }
-
-            }
-
-            public static class ConsoleCommand extends NPC.Interact.Actions.Command{
-
-                protected ConsoleCommand(NPC npc, NPC.Interact.ClickType clickType, String command) {
-                    super(npc, NPC.Interact.Actions.Type.RUN_CONSOLE_COMMAND, clickType, command);
-                    super.action = (npc1, player) -> Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), getReplacedString(player, super.getCommand()));
-                }
-
-            }
-
-            public static class Title extends ClickAction{
-
-                private final String title;
-                private final String subtitle;
-                private final Integer fadeIn;
-                private final Integer stay;
-                private final Integer fadeOut;
-
-                protected Title(NPC npc, NPC.Interact.ClickType clickType, String title, String subtitle, Integer fadeIn, Integer stay, Integer fadeOut) {
-                    super(npc, NPC.Interact.Actions.Type.SEND_TITLE_MESSAGE, clickType);
-                    this.title = title;
-                    this.subtitle = subtitle;
-                    this.fadeIn = fadeIn;
-                    this.stay = stay;
-                    this.fadeOut = fadeOut;
-                    super.action = (npc1, player) -> player.sendTitle("§f" + getReplacedString(player,getTitle()), getReplacedString(player,getSubtitle()), getFadeIn(), getStay(), getFadeOut());
-                }
-
-                public String getTitle() {
-                    return title;
-                }
-
-                public String getSubtitle() {
-                    return subtitle;
-                }
-
-                public Integer getFadeIn() {
-                    return fadeIn;
-                }
-
-                public Integer getStay() {
-                    return stay;
-                }
-
-                public Integer getFadeOut() {
-                    return fadeOut;
-                }
-
-            }
-
-            public static class ActionBar extends ClickAction{
-
-                private final String message;
-
-                public ActionBar(NPC npc, NPC.Interact.ClickType clickType, String message) {
-                    super(npc, NPC.Interact.Actions.Type.SEND_ACTIONBAR_MESSAGE, clickType);
-                    this.message = message;
-                    super.action = (npc1, player) -> player.spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(getReplacedString(player, getMessage())));
-                }
-
-                public String getMessage() {
-                    return message;
-                }
-            }
-
-            public static class BungeeServer extends ClickAction{
-
-                private final String server;
-
-                protected BungeeServer(NPC npc, NPC.Interact.ClickType clickType, String server) {
-                    super(npc, NPC.Interact.Actions.Type.CONNECT_BUNGEE_SERVER, clickType);
-                    this.server = server;
-                    super.action = (npc1, player) -> {
-                        if(!Bukkit.getServer().getMessenger().isOutgoingChannelRegistered(PlayerNPCPlugin.getInstance(), "BungeeCord")) Bukkit.getServer().getMessenger().registerOutgoingPluginChannel(PlayerNPCPlugin.getInstance(), "BungeeCord");
-                        ByteArrayDataOutput out = ByteStreams.newDataOutput();
-                        out.writeUTF("Connect");
-                        out.writeUTF(getReplacedString(player, server));
-                        player.sendPluginMessage(PlayerNPCPlugin.getInstance(), "BungeeCord", out.toByteArray());
-                    };
-                }
-
-                public String getServer() {
-                    return server;
-                }
-            }
-
-            public static class TeleportToLocation extends ClickAction{
-
-                private final Location location;
-
-                public TeleportToLocation(NPC npc, NPC.Interact.ClickType clickType, Location location) {
-                    super(npc, Type.TELEPORT_TO_LOCATION, clickType);
-                    this.location = location;
-                    super.action = (npc1, player) -> player.teleport(getLocation());
-                }
-
-                public Location getLocation() {
-                    return location;
                 }
             }
 
@@ -3957,6 +4896,61 @@ public abstract class NPC {
             public ClickType getInvert(){
                 if(this.equals(RIGHT_CLICK)) return LEFT_CLICK;
                 if(this.equals(LEFT_CLICK)) return RIGHT_CLICK;
+                return null;
+            }
+
+        }
+    }
+
+    public static class Inventory{
+
+        private Inventory(){}
+
+        public static class Kit implements ConfigurationSerializable {
+
+            private HashMap<Integer, ItemStack> items;
+
+            public Kit() {
+                this.items = new HashMap<>();
+            }
+
+            public Kit(@Nonnull PlayerInventory playerInventory){
+                this();
+                for(int i = 0; i < 36; i++){
+                    ItemStack itemStack = playerInventory.getItem(i);
+                    if(itemStack == null || itemStack.getType().equals(Material.AIR)) continue;
+                    items.put(i, playerInventory.getItem(i));
+                }
+                items.put(36, playerInventory.getItemInOffHand());
+                items.put(37, playerInventory.getHelmet());
+                items.put(38, playerInventory.getChestplate());
+                items.put(39, playerInventory.getLeggings());
+                items.put(40, playerInventory.getBoots());
+            }
+
+            public Kit(@Nonnull Player player){
+                this(player.getInventory());
+            }
+
+            public void setItem(Integer slot, ItemStack itemStack){
+                if(itemStack == null || itemStack.getType().equals(Material.AIR)) return;
+                items.put(slot, itemStack);
+            }
+
+            public void giveKit(Player player){
+                for(int i = 0; i < 36; i++){
+                    ItemStack itemStack = items.get(i);
+                    if(itemStack == null || itemStack.getType().equals(Material.AIR)) continue;
+                    player.getInventory().setItem(i, itemStack);
+                }
+            }
+
+            public static void giveKit(Kit kit, Player player){
+                kit.giveKit(player);
+            }
+
+            @Override
+            public Map<String, Object> serialize() {
                 return null;
             }
 
@@ -4000,11 +4994,11 @@ public abstract class NPC {
             List<EntityArmorStand> armorStands = new ArrayList<>();
             for(int i = 1; i <= textOpacity.getTimes(); i++){
                 EntityArmorStand armor = new EntityArmorStand(world, location.getX(), location.getY() + (npc.getLineSpacing() * ((getText().size() - line))), location.getZ());
-                armor.n(true); //setCustomNameVisible
-                armor.e(true); //setNoGravity
+                NMSEntity.setCustomNameVisible(armor, true);
+                NMSEntity.setNoGravity(armor, true);
                 NMSEntity.setCustomName(armor, "§f");
-                armor.j(true); //setInvisible
-                armor.t(true); //setMarker
+                NMSEntityArmorStand.setInvisible(armor, true);
+                NMSEntityArmorStand.setMarker(armor, true);
                 armorStands.add(armor);
             }
             lines.put(line, armorStands);
@@ -4014,17 +5008,18 @@ public abstract class NPC {
         protected void setLine(int line, String text) {
             if(!lines.containsKey(line)) return;
             String replacedText = NPC.Placeholders.replace(npc, player, text);
+            replacedText = ColorUtils.formatHexColor(replacedText);
             for(EntityArmorStand as : lines.get(line)){
-                as.e(true); //setNoGravity
-                as.j(true); //setInvisible
+                NMSEntity.setNoGravity(as, true);
+                NMSEntityArmorStand.setInvisible(as, true);
                 NMSEntity.setCustomName(as, replacedText);
-                as.n(text != null && text != ""); //setCustomNameVisible
+                NMSEntity.setCustomNameVisible(as, text != null && text != "");
             }
         }
 
         protected String getLine(int line) {
             if(!lines.containsKey(line)) return "";
-            return lines.get(line).get(0).Z().getString(); //Z getCustomName
+            return NMSEntity.getCustomName(lines.get(line).get(0)).getString();
         }
 
         protected boolean hasLine(int line){
@@ -4042,7 +5037,7 @@ public abstract class NPC {
             for(Integer line : lines.keySet()){
                 for(EntityArmorStand armor : lines.get(line)){
                     NMSPacketPlayOutSpawnEntity.sendPacket(getPlayer(), armor);
-                    NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutEntityMetadata(armor.ae(), armor.ai(), true)); //ae getID //ai getDataWatcher
+                    NMSCraftPlayer.sendPacket(getPlayer(), new PacketPlayOutEntityMetadata(NMSEntity.getEntityID(armor), NMSEntity.getDataWatcher(armor), true));
                 }
             }
             canSee = true;
@@ -4052,7 +5047,7 @@ public abstract class NPC {
             if(!canSee) return;
             for (Integer in : lines.keySet()) {
                 for(EntityArmorStand armor : lines.get(in)){
-                    NMSCraftPlayer.sendPacket(getPlayer(), NMSPacketPlayOutEntityDestroy.createPacket(armor.ae())); //ae getID
+                    NMSCraftPlayer.sendPacket(getPlayer(), NMSPacketPlayOutEntityDestroy.createPacket(NMSEntity.getEntityID(armor)));
                 }
             }
             canSee = false;
@@ -4068,7 +5063,7 @@ public abstract class NPC {
                     double fy = location.getY() + vector.getY();
                     double fz = location.getZ() + vector.getZ();
                     armor.g(fx, fy, fz);
-                    playerConnection.a(new PacketPlayOutEntityTeleport(armor));
+                    NMSCraftPlayer.sendPacket(playerConnection, new PacketPlayOutEntityTeleport(armor));
                 }
             }
         }
@@ -4140,7 +5135,7 @@ public abstract class NPC {
     public static class Attributes {
 
         private static final Attributes DEFAULT = new Attributes(
-                NPC.Skin.getSteveSkin(),
+                NPC.Skin.Minecraft.getSteveSkin(),
                 new Skin.Parts(),
                 new ArrayList<>(),
                 new HashMap<>(),
@@ -4330,7 +5325,7 @@ public abstract class NPC {
         }
 
         protected void setSkin(@Nullable NPC.Skin skin) {
-            if(skin == null) skin = NPC.Skin.getSteveSkin();
+            if(skin == null) skin = NPC.Skin.Minecraft.getSteveSkin();
             this.skin = skin;
         }
 
@@ -4753,9 +5748,331 @@ public abstract class NPC {
         public void resetLinesOpacity(){ linesOpacity = new HashMap<>(); }
     }
 
-    /**
-     * @since 2022.2
-     */
+    public static class Conditions {
+
+        public enum Type{
+            PLAYER_HAS_PERMISSION,
+            COMPARATOR_SENTENCE,
+            @Deprecated COMPARATOR_NUMBER,
+            ;
+
+            public boolean isDeprecated(){
+                try { return NPC.Conditions.Type.class.getField(this.name()).isAnnotationPresent(Deprecated.class); }
+                catch (NoSuchFieldException | SecurityException e) { return false; }
+            }
+        }
+
+        public static abstract class Condition implements ConfigurationSerializable{
+
+            protected final Type type;
+            protected BiFunction<NPC, org.bukkit.entity.Player, Boolean> condition;
+            protected Boolean enabled;
+            protected ErrorResponse errorResponse;
+
+            protected Condition(Type type) {
+                this.type = type;
+                this.errorResponse = new ErrorResponse();
+                this.condition = null;
+                this.enabled = true;
+            }
+
+            public boolean test(NPC npc, org.bukkit.entity.Player player) {
+                boolean result = testSilent(npc, player);
+                if(!result && errorResponse != null) errorResponse.play(npc, player);
+                return result;
+            }
+
+            public boolean testSilent(NPC npc, org.bukkit.entity.Player player) {
+                if(!enabled) return true;
+                return condition.apply(npc, player);
+            }
+
+            public ErrorResponse getErrorResponse() {
+                return errorResponse;
+            }
+
+            protected void setErrorResponse(ErrorResponse errorResponse) {
+                this.errorResponse = errorResponse;
+            }
+
+            public Boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(Boolean enabled) {
+                if(enabled == null) enabled = true;
+                this.enabled = enabled;
+            }
+
+            public Type getType() {
+                return type;
+            }
+
+            protected Map<String, Object> generalSerialization(){
+                Map<String, Object> data = new HashMap<>();
+                data.put("enabled", isEnabled());
+                if(errorResponse.getErrorMessage() == null) data.put("errorResponse.message", "");
+                else data.put("errorResponse.message", getErrorResponse().getErrorMessage().replaceAll("§", "&"));
+                data.put("errorResponse.messageType", getErrorResponse().getChatMessageType().name());
+                data.put("errorResponse.redAnimation", getErrorResponse().getPlayRedAnimation());
+                data.put("errorResponse.sound", getErrorResponse().getSound() != null ? getErrorResponse().getSound().name() : "none");
+                data.put("errorResponse.soundVolume", getErrorResponse().getSoundVolume().doubleValue());
+                data.put("errorResponse.soundPitch", getErrorResponse().getSoundPitch().doubleValue());
+                return data;
+            }
+
+            protected static void generalDeserialization(Map<String, Object> map, Condition condition){
+                if(map.containsKey("enabled")) condition.setEnabled((Boolean) map.get("enabled"));
+                ErrorResponse errorResponse = condition.getErrorResponse();
+                if(map.containsKey("errorResponse.message")){
+                    String as = ((String) map.get("errorResponse.message"));
+                    if(as.equals("")) errorResponse.setMessage(null);
+                    else errorResponse.setMessage(as.replaceAll("&", "§"));
+                }
+                if(map.containsKey("errorResponse.messageType")) errorResponse.setChatMessageType(ChatMessageType.valueOf((String) map.get("errorResponse.messageType")));
+                if(map.containsKey("errorResponse.redAnimation")) errorResponse.setPlayRedAnimation((Boolean) map.get("errorResponse.redAnimation"));
+                if(map.containsKey("errorResponse.sound")){
+                    if(map.get("errorResponse.sound").equals("none")) errorResponse.sound = null;
+                    else errorResponse.sound = Sound.valueOf((String) map.get("errorResponse.sound"));
+                }
+                if(map.containsKey("errorResponse.soundVolume")) errorResponse.soundVolume = ((Double) map.get("errorResponse.soundVolume")).floatValue();
+                if(map.containsKey("errorResponse.soundPitch")) errorResponse.soundPitch = ((Double) map.get("errorResponse.soundPitch")).floatValue();
+            }
+        }
+
+        public static class Comparator{
+
+            public static class Sentence extends Condition{
+
+                private String first;
+                private String second;
+                private Logic logic;
+                private Boolean logicNegative;
+
+                public Sentence() {
+                    super(Type.COMPARATOR_SENTENCE);
+                    this.logic = Logic.EQUALS;
+                    this.first = "";
+                    this.second = "";
+                    this.logicNegative = false;
+                    super.condition = (npc, player) -> {
+                        if(getFirst() == null || getSecond() == null || getLogic() == null) return true;
+                        String firstSentence = NPC.Placeholders.replace(npc, player, getFirst());
+                        String secondSentence = NPC.Placeholders.replace(npc, player, getSecond());
+                        Boolean logicResult = true;
+                        if(getLogic().equals(Logic.EQUALS)) logicResult = firstSentence.equals(secondSentence);
+                        if(getLogic().equals(Logic.EQUALS_IGNORE_CASE)) logicResult = firstSentence.equalsIgnoreCase(secondSentence);
+                        if(getLogic().equals(Logic.CONTAINS)) logicResult = firstSentence.contains(secondSentence);
+                        if(getLogic().equals(Logic.CONTAINS_IGNORE_CASE)) logicResult = firstSentence.toLowerCase().contains(secondSentence.toLowerCase());
+                        if(getLogic().equals(Logic.STARTS_WITH)) logicResult = firstSentence.startsWith(secondSentence);
+                        if(getLogic().equals(Logic.ENDS_WITH)) logicResult = firstSentence.endsWith(secondSentence);
+                        if(isLogicNegative()) logicResult = !logicResult;
+                        return logicResult;
+                    };
+                }
+
+                @Nonnull
+                public String getFirst() {
+                    return first;
+                }
+
+                @Nonnull
+                public String getSecond() {
+                    return second;
+                }
+
+                @Nonnull
+                public Logic getLogic() {
+                    return logic;
+                }
+
+                public Boolean isLogicNegative() {
+                    return logicNegative;
+                }
+
+                public enum Logic{
+                    EQUALS, EQUALS_IGNORE_CASE, CONTAINS, CONTAINS_IGNORE_CASE, STARTS_WITH, ENDS_WITH;
+                }
+
+                public void setFirst(@Nonnull String first) {
+                    Validate.notNull(first);
+                    this.first = first;
+                }
+
+                public void setSecond(@Nonnull String second) {
+                    Validate.notNull(second);
+                    this.second = second;
+                }
+
+                public void setLogic(@Nonnull Logic logic) {
+                    Validate.notNull(logic);
+                    this.logic = logic;
+                }
+
+                public void setLogicNegative(@Nonnull Boolean logicNegative) {
+                    Validate.notNull(logicNegative);
+                    this.logicNegative = logicNegative;
+                }
+
+                @Override
+                public Map<String, Object> serialize() {
+                    Map<String, Object> data = new HashMap<>();
+                    data.put("first", getFirst());
+                    data.put("second", getSecond());
+                    data.put("logic", getLogic().name());
+                    data.putAll(generalSerialization());
+                    return data;
+                }
+
+                public static Conditions.Comparator.Sentence deserialize(Map<String, Object> map){
+                    Conditions.Comparator.Sentence condition = new Conditions.Comparator.Sentence();
+                    if(map.containsKey("first")) condition.first = (String) map.get("first");
+                    if(map.containsKey("second")) condition.second = (String) map.get("second");
+                    if(map.containsKey("logic")) condition.logic = Logic.valueOf((String) map.get("logic"));
+                    if(map.containsKey("logicNegative")) condition.logicNegative = (Boolean) map.get("logicNegative");
+                    generalDeserialization(map, condition);
+                    return condition;
+                }
+
+            }
+
+        }
+
+        public static class Player{
+
+            private Player(){}
+
+            public static class Permission extends Condition{
+
+                private String permission;
+
+                public Permission(String permission) {
+                    super(Type.PLAYER_HAS_PERMISSION);
+                    super.condition = (npc, player) -> player.hasPermission(NPC.Placeholders.replace(npc, player, getPermission())) || player.isOp();
+                    this.permission = permission;
+                }
+
+                public String getPermission() {
+                    return permission;
+                }
+
+                public void setPermission(@Nonnull String permission) {
+                    Validate.notNull(permission);
+                    this.permission = permission;
+                }
+
+                @Override
+                public Map<String, Object> serialize() {
+                    Map<String, Object> data = new HashMap<>();
+                    data.put("permission", getPermission());
+                    data.putAll(generalSerialization());
+                    return data;
+                }
+
+                public static Conditions.Player.Permission deserialize(Map<String, Object> map){
+                    Permission permission = new Permission((String) map.get("permission"));
+                    generalDeserialization(map, permission);
+                    return permission;
+                }
+
+            }
+
+        }
+
+        public static class ErrorResponse{
+
+            private ChatMessageType chatMessageType;
+            private String errorMessage;
+            private Boolean playRedAnimation;
+            private Sound sound;
+            private Float soundVolume;
+            private Float soundPitch;
+
+            public ErrorResponse() {
+                chatMessageType = ChatMessageType.CHAT;
+                errorMessage = null;
+                playRedAnimation = false;
+                sound = null;
+                soundVolume = 1.000000000F;
+                soundPitch = 1.0000000000F;
+            }
+
+            protected void play(NPC npc, org.bukkit.entity.Player player){
+                if(errorMessage != null) player.spigot().sendMessage(chatMessageType, new TextComponent(NPC.Placeholders.replace(npc, player, errorMessage)));
+                if(playRedAnimation){
+                    if(npc instanceof Global) ((Global) npc).playAnimation(player, Animation.TAKE_DAMAGE);
+                    else npc.playAnimation(Animation.TAKE_DAMAGE);
+                }
+                if(sound != null) player.playSound(npc.getLocation(), sound, soundVolume, soundPitch);
+            }
+
+            public void setMessage(String errorMessage){
+                this.errorMessage = errorMessage;
+            }
+
+            public void setChatMessageType(ChatMessageType chatMessageType) {
+                this.chatMessageType = chatMessageType;
+            }
+
+            public void setMessage(ChatMessageType chatMessageType, String errorMessage){
+                this.chatMessageType = chatMessageType;
+                this.errorMessage = errorMessage;
+            }
+
+            public void setSound(Sound sound){
+                this.sound = sound;
+            }
+
+            public void setSound(Sound sound, Float volume, Float pitch){
+                this.sound = sound;
+                setSoundVolume(volume);
+                setSoundPitch(pitch);
+            }
+
+            public void setSoundVolume(Float soundVolume) {
+                if(soundVolume <= 0.1) soundVolume = 0.1F;
+                if(soundVolume >= 1.0) soundVolume = 1.0F;
+                this.soundVolume = (float) (Math.round(soundVolume * 10.0) / 10.0);
+            }
+
+            public void setSoundPitch(Float soundPitch) {
+                if(soundPitch <= 0.5) soundPitch = 0.5F;
+                if(soundPitch >= 2.0) soundPitch = 2.0F;
+                this.soundPitch = (float) (Math.round(soundPitch * 10.0) / 10.0);
+            }
+
+            public void setPlayRedAnimation(Boolean playRedAnimation) {
+                this.playRedAnimation = playRedAnimation;
+            }
+
+            public ChatMessageType getChatMessageType() {
+                return chatMessageType;
+            }
+
+            public String getErrorMessage() {
+                return errorMessage;
+            }
+
+            public Boolean getPlayRedAnimation() {
+                return playRedAnimation;
+            }
+
+            public Sound getSound() {
+                return sound;
+            }
+
+            public Float getSoundVolume() {
+                return soundVolume;
+            }
+
+            public Float getSoundPitch() {
+                return soundPitch;
+            }
+
+        }
+
+    }
+
     public static class Placeholders {
 
         private static HashMap<String, BiFunction<NPC, Player, String>> placeholders;
@@ -4804,6 +6121,13 @@ public abstract class NPC {
             placeholders.put(placeholder, replacement);
         }
 
+        public static void addPlaceholderIfNotExists(@Nonnull String placeholder, @Nonnull BiFunction<NPC, Player, String> replacement){
+            Validate.notNull(placeholder, "Placeholder cannot be null.");
+            Validate.notNull(replacement, "Replacement cannot be null.");
+            if(placeholders.containsKey(placeholder)) return;
+            placeholders.put(placeholder, replacement);
+        }
+
         public static boolean existsPlaceholder(@Nonnull String placeholder){
             Validate.notNull(placeholder, "Placeholder cannot be null.");
             return placeholders.containsKey(placeholder);
@@ -4821,6 +6145,7 @@ public abstract class NPC {
             if(npc instanceof Personal){
                 Personal personal = (Personal) npc;
                 if(personal.hasGlobal()) customDataNPC = personal.getGlobal();
+                else customDataNPC = personal;
             }
             for(String key : customDataNPC.getCustomDataKeys()){
                 if(!string.contains("{customData:" + key + "}")) continue;
